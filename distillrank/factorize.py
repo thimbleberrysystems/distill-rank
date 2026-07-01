@@ -61,6 +61,32 @@ def saves_params(r: int, out: int, in_: int) -> bool:
 
 # --- SVD ---------------------------------------------------------------------
 
+def whiten_svd(W: np.ndarray, H: np.ndarray, policy: "RankPolicy",
+               damp: float = 1e-3) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Activation-aware truncation (SVD-LLM style).
+
+    Given input covariance H (=Σ x xᵀ), truncate W in the H-metric: factor W·S
+    (H = S Sᵀ), keep rank r, then de-whiten. Returns runtime factors
+    (U[out,r], s[r], Vt[r,in]) with W_r = U diag(s) Vt ≈ W, minimizing ‖(W-W_r)·X‖.
+    """
+    Wt = torch.tensor(np.ascontiguousarray(W), dtype=torch.float64)
+    Ht = torch.tensor(np.ascontiguousarray(H), dtype=torch.float64)
+    n = Ht.shape[0]
+    eps = damp * torch.diagonal(Ht).mean().clamp(min=1e-8)
+    Ht = Ht + eps * torch.eye(n, dtype=torch.float64)
+    S = torch.linalg.cholesky(Ht)                       # H = S Sᵀ (S lower-triangular)
+    U, sig, Vt = torch.linalg.svd(Wt @ S, full_matrices=False)
+    r = policy.choose(sig.numpy().astype(np.float32), W.shape[0], W.shape[1])
+    U, sig, Vt = U[:, :r], sig[:r], Vt[:r, :]
+    # svd_vt = Vt @ S^{-1}  ->  svd_vtᵀ = (Sᵀ)^{-1} Vtᵀ = solve_triangular(Sᵀ, Vtᵀ, upper)
+    svd_vt = torch.linalg.solve_triangular(
+        S.transpose(-1, -2), Vt.transpose(-1, -2), upper=True).transpose(-1, -2)
+    err = float(((U * sig) @ svd_vt - Wt).abs().max())
+    return (np.ascontiguousarray(U.to(torch.float32).numpy()),
+            np.ascontiguousarray(sig.to(torch.float32).numpy()),
+            np.ascontiguousarray(svd_vt.to(torch.float32).numpy()), err)
+
+
 def svd_truncate(W: np.ndarray, r: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Return (U[out,r], s[r], Vt[r,in], max_abs_reconstruction_error)."""
     W = np.ascontiguousarray(W, dtype=np.float32)

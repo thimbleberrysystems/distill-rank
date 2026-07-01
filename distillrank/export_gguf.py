@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import ggufio
-from .factorize import RankPolicy, saves_params, svd_truncate, _svd
+from .factorize import RankPolicy, saves_params, svd_truncate, whiten_svd, _svd
 
 import gguf  # noqa: E402  (path set up by ggufio)
 
@@ -30,22 +30,27 @@ class ExportStats:
     per_tensor: list = field(default_factory=list)  # (name, out, in, r, err)
 
 
-def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str):
+def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=None):
     out, in_ = W.shape
-    Wc = np.ascontiguousarray(W, dtype=np.float32)
-    U, s, Vt = _svd(Wc)   # single SVD (torch-backed); reuse s for rank choice
-    r = policy.choose(s, out, in_)
+    if H is not None:                       # activation-aware
+        U, s, Vt, err = whiten_svd(W, H, policy)
+    else:                                   # plain SVD (single, torch-backed)
+        Wc = np.ascontiguousarray(W, dtype=np.float32)
+        U0, s0, Vt0 = _svd(Wc)
+        r = policy.choose(s0, out, in_)
+        U = np.ascontiguousarray(U0[:, :r]); s = np.ascontiguousarray(s0[:r]); Vt = np.ascontiguousarray(Vt0[:r, :])
+        err = float(np.abs((U * s) @ Vt - Wc).max())
+    r = s.shape[0]
     if not saves_params(r, out, in_):
         return None
-    U, s, Vt = np.ascontiguousarray(U[:, :r]), np.ascontiguousarray(s[:r]), np.ascontiguousarray(Vt[:r, :])
-    err = float(np.abs((U * s) @ Vt - Wc).max())
     st.max_err = max(st.max_err, err)
     st.per_tensor.append((name, out, in_, r, err))
     st.new_params += U.size + s.size + Vt.size
     return U, s, Vt
 
 
-def export(infile: str, outfile: str, policy: RankPolicy) -> ExportStats:
+def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = None) -> ExportStats:
+    """stats: optional {gguf_base_name: input covariance H} for activation-aware truncation."""
     reader, arch = ggufio.open_reader(infile)
     writer = gguf.GGUFWriter(outfile, arch)
     ggufio.copy_kv(reader, writer)
@@ -63,7 +68,8 @@ def export(infile: str, outfile: str, policy: RankPolicy) -> ExportStats:
         base = t.name[: -len(".weight")]
 
         if kind == "dense":
-            res = _factor_2d(data, policy, st, t.name)
+            H = stats.get(base) if stats else None
+            res = _factor_2d(data, policy, st, t.name, H=H)
             if res is None:
                 st.kept_dense += 1
                 st.new_params += data.size

@@ -12,8 +12,25 @@ import csv
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from . import evaltools, ggufio
 from .export_gguf import RankPolicy, export, _fmt
+
+
+def _load_stats(path):
+    return {k: v for k, v in np.load(path).items()} if path else None
+
+
+def cmd_calibrate(args):
+    from transformers import AutoTokenizer
+    from .calibrate import collect_covariance
+    tok = AutoTokenizer.from_pretrained(args.model_dir)
+    text = open(args.text).read()
+    stats = collect_covariance(args.model_dir, [text], tok,
+                               seqlen=args.seqlen, max_seqs=args.seqs, device=args.device)
+    np.savez_compressed(args.out, **stats)
+    print(f"[calibrate] {len(stats)} covariances -> {args.out}", file=sys.stderr)
 
 
 def _policy(args) -> RankPolicy:
@@ -28,7 +45,7 @@ def _policy(args) -> RankPolicy:
 
 def cmd_factorize(args):
     _, arch = ggufio.open_reader(args.infile)
-    st = export(args.infile, args.outfile, _policy(args))
+    st = export(args.infile, args.outfile, _policy(args), stats=_load_stats(args.stats))
     print(_fmt(st, arch), file=sys.stderr)
 
 
@@ -57,7 +74,7 @@ def cmd_sweep(args):
     for frac in args.fracs:
         out = f"runs/{Path(args.base).stem}-frac{frac}.gguf"
         policy = RankPolicy("full") if frac >= 1.0 else RankPolicy("frac", frac)
-        st = export(args.base, out, policy)
+        st = export(args.base, out, policy, stats=_load_stats(args.stats))
         print(_fmt(st, "sweep"), file=sys.stderr)
         row = {"frac": frac, "param_ratio": round(st.new_params / max(st.orig_params, 1), 3)}
         row.update(_eval_one(out, args))
@@ -85,8 +102,15 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="distillrank")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    c = sub.add_parser("calibrate")
+    c.add_argument("model_dir"); c.add_argument("text"); c.add_argument("out")
+    c.add_argument("--seqlen", type=int, default=512); c.add_argument("--seqs", type=int, default=128)
+    c.add_argument("--device", default="auto")
+    c.set_defaults(func=cmd_calibrate)
+
     f = sub.add_parser("factorize")
     f.add_argument("infile"); f.add_argument("outfile")
+    f.add_argument("--stats", help="npz of activation covariances (activation-aware)")
     g = f.add_mutually_exclusive_group()
     g.add_argument("--rank", type=int); g.add_argument("--frac", type=float); g.add_argument("--energy", type=float)
     f.set_defaults(func=cmd_factorize)
@@ -98,6 +122,7 @@ def main(argv=None):
     s = sub.add_parser("sweep")
     s.add_argument("base")
     s.add_argument("--fracs", type=float, nargs="+", default=[1.0, 0.75, 0.5, 0.25])
+    s.add_argument("--stats", help="npz of activation covariances (activation-aware)")
     s.add_argument("--out", default="runs/sweep.csv")
     _add_eval_flags(s)
     s.set_defaults(func=cmd_sweep)

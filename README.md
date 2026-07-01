@@ -80,16 +80,28 @@ python -m distillrank sweep base.gguf --fracs 1 .75 .5 .25 --ppl data/eval/wiki.
   factored form would be *bigger*, so it's kept dense. (Full-rank factoring never shrinks.)
 - **Truncation math:** `r < min(m,n)` gives `r(m+n)` params vs `mn` and squeezes the matmul
   through a width-`r` bottleneck → smaller **and** faster; the cost is approximation error.
-- **First finding:** plain data-free SVD is brutal on a small dense model. On SmolLM2-135M,
-  fracs ≥ 0.5 are no-ops (break-even keeps them dense) and below that quality collapses
-  (perplexity 16.7 → 1e7). This is the known weakness of weight-only SVD and the motivation
-  for the next milestones: **activation-aware** truncation (M2) and **finetune/distill
-  recovery** (M3). Larger models with rectangular FFNs compress far better.
+- **M1 finding:** plain data-free SVD is brutal on a small dense model. On SmolLM2-135M,
+  fracs ≥ 0.5 are no-ops (break-even keeps them dense) and below that quality collapses.
+- **M2 — activation-aware (SVD-LLM style):** calibrate on a text set to collect each linear's
+  input covariance `H = Σ xxᵀ`, then truncate `W` in the H-metric (factor `W·S` where
+  `H = SSᵀ`, truncate, de-whiten). This keeps the directions that matter for real
+  activations. At **frac 0.4** on SmolLM2-135M (same 0.60× params):
 
-Modules: `factorize.py` (SVD + rank policies + break-even), `export_gguf.py`
-(factored-GGUF writer, dense + MoE), `evaltools.py` (llama-perplexity / llama-bench
-wrappers), `ggufio.py`, `cli.py`. M2–M4 add `calibrate.py`, activation-aware factorizers,
-`finetune/`, and a config-driven `runner.py`.
+  | variant | perplexity |
+  |---|---|
+  | base | 22.4 |
+  | plain SVD | 31,495,835 |
+  | **activation-aware** | **663.8** (~47,000× better) |
+
+  ```bash
+  python -m distillrank calibrate models/SmolLM2-135M data/eval/wiki.test.raw runs/stats.npz --seqs 24
+  python -m distillrank factorize base.gguf out.gguf --frac 0.4 --stats runs/stats.npz
+  ```
+
+Modules: `factorize.py` (plain + `whiten_svd` activation-aware + rank policies + break-even),
+`calibrate.py` (per-linear covariance, HF→GGUF name map), `export_gguf.py` (factored-GGUF
+writer, dense + MoE), `evaltools.py` (llama-perplexity / llama-bench), `ggufio.py`, `cli.py`
+(`calibrate`/`factorize`/`eval`/`sweep`). M3–M4 add `finetune/` and a config `runner.py`.
 
 ## Layout
 
