@@ -62,11 +62,11 @@ gemma, phi, mistral, mixtral, qwen3-moe, …). The producer deliberately skips
 weights that bypass those ops (MLA `attn_*_a/_b`, SSM/conv), since they are not
 plain linear projections.
 
-## Phase 2 — compression pipeline (in progress)
+## Phase 2 — modular compression pipeline
 
 `distillrank/` is a modular pipeline that actually *shrinks* models: truncate the
 SVD rank, keep the factored form (which runs on the patched runtime), and measure
-the accuracy-vs-speed tradeoff. Milestone 1 (data-free) is in:
+the accuracy-vs-speed tradeoff. Config-driven end to end:
 
 ```bash
 scripts/build_tools.sh            # build llama-perplexity + llama-bench (clean b9509 + svd patch)
@@ -117,13 +117,24 @@ python -m distillrank sweep base.gguf --fracs 1 .75 .5 .25 --ppl data/eval/wiki.
   ```
   (More steps + a GPU + gentler ranks close the rest of the gap.)
 
+- **M4 — config-driven orchestrator + global rank budget.** One YAML describes a full run
+  (calibrate → factorize [activation-aware] [+ finetune] → export → eval); the runner executes
+  it and writes `runs/<name>/{stats.npz, model.gguf, results.json}`. A `budget` rank mode
+  binary-searches a global energy threshold to hit a target parameter ratio (each layer keeps
+  the smallest rank capturing that energy — layers with fast-decaying spectra compress more).
+
+  ```bash
+  python -m distillrank run configs/smollm2-aa-ft.yaml     # end-to-end from one config
+  python -m distillrank plan base.gguf 0.6                 # energy threshold for a 0.6x budget
+  ```
+
 Modules: `factorize.py` (plain + `whiten_svd` activation-aware + rank policies + break-even),
 `calibrate.py` (per-linear covariance, HF→GGUF name map), `ir.py` (`LowRankLinear`),
-`finetune/distill.py` (KD, device-agnostic), `export_gguf.py` (factored + merged writer,
-dense + MoE), `evaltools.py` (llama-perplexity / llama-bench), `ggufio.py`, `cli.py`
-(`calibrate`/`factorize`/`finetune`/`eval`/`sweep`; `factorize --merge` writes reconstructed
-dense weights that run on **stock** Ollama for measurement). M4 adds a config `runner.py`
-and global rank-budget allocation.
+`finetune/distill.py` (KD, device-agnostic), `planner.py` (budget search), `runner.py`
+(config pipeline), `export_gguf.py` (factored + merged writer, dense + MoE), `evaltools.py`
+(llama-perplexity / llama-bench), `ggufio.py`, `cli.py`
+(`run`/`plan`/`calibrate`/`factorize`/`finetune`/`eval`/`sweep`; `factorize --merge` writes
+reconstructed dense weights that run on **stock** Ollama for measurement).
 
 ## Layout
 

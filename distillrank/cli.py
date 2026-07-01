@@ -22,6 +22,18 @@ def _load_stats(path):
     return {k: v for k, v in np.load(path).items()} if path else None
 
 
+def cmd_run(args):
+    from .runner import run_file
+    run_file(args.config)
+
+
+def cmd_plan(args):
+    from .planner import energy_for_budget
+    tau = energy_for_budget(args.base, args.target)
+    print(f"energy threshold {tau:.4f} for target param ratio {args.target} "
+          f"(use: factorize --energy {tau:.4f})")
+
+
 def cmd_calibrate(args):
     from transformers import AutoTokenizer
     from .calibrate import collect_covariance
@@ -114,6 +126,12 @@ def _add_eval_flags(p):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="distillrank")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("run"); r.add_argument("config"); r.set_defaults(func=cmd_run)
+
+    pl = sub.add_parser("plan")
+    pl.add_argument("base"); pl.add_argument("target", type=float, help="target param ratio, e.g. 0.6")
+    pl.set_defaults(func=cmd_plan)
 
     c = sub.add_parser("calibrate")
     c.add_argument("model_dir"); c.add_argument("text"); c.add_argument("out")

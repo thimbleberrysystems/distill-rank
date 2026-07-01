@@ -1,0 +1,25 @@
+# Full pipeline on SmolLM2-135M: activation-aware truncation + KD finetune.
+#   python -m distillrank run configs/smollm2-aa-ft.yaml
+name: smollm2-aa0.6-ft
+model:
+  dir: models/SmolLM2-135M                 # HF checkout (for calibration + finetune)
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware                    # plain | activation_aware
+rank:
+  type: frac                                # full | fixed | frac | energy | budget
+  value: 0.6
+calibration:
+  text: data/eval/wiki.test.raw
+  seqs: 24
+  seqlen: 512
+  device: auto
+finetune:                                   # omit this block to skip finetuning
+  text: data/eval/wiki.test.raw
+  steps: 200
+  lr: 1.0e-5
+  seqlen: 256
+  device: auto
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true
