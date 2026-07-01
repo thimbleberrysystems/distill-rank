@@ -49,8 +49,15 @@ def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=
     return U, s, Vt
 
 
-def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = None) -> ExportStats:
-    """stats: optional {gguf_base_name: input covariance H} for activation-aware truncation."""
+def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = None,
+           merge: bool = False) -> ExportStats:
+    """Factorize each target linear.
+
+    stats: optional {gguf_base_name: input covariance H} for activation-aware truncation.
+    merge: if True, write the reconstructed dense low-rank weight W' = U diag(s) Vt under
+           the original tensor name (same size, runs on STOCK Ollama) instead of the
+           factors — for measuring rank-r quality without the patched runtime.
+    """
     reader, arch = ggufio.open_reader(infile)
     writer = gguf.GGUFWriter(outfile, arch)
     ggufio.copy_kv(reader, writer)
@@ -88,10 +95,52 @@ def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = N
             Vt = np.stack([p[2] for p in per])
 
         st.factorized += 1
+        if merge:  # reconstruct dense W' = U diag(s) Vt (stock-Ollama compatible)
+            if U.ndim == 2:
+                Wr = (U * s) @ Vt
+            else:  # MoE stack
+                Wr = np.stack([(U[e] * s[e]) @ Vt[e] for e in range(U.shape[0])])
+            writer.add_tensor(t.name, np.ascontiguousarray(Wr, dtype=np.float32),
+                              raw_dtype=gguf.GGMLQuantizationType.F32)
+            continue
         writer.add_tensor(base + ".svd_u", U, raw_dtype=gguf.GGMLQuantizationType.F32)
         writer.add_tensor(base + ".svd_s", s, raw_dtype=gguf.GGMLQuantizationType.F32)
         writer.add_tensor(base + ".svd_vt", Vt, raw_dtype=gguf.GGMLQuantizationType.F32)
 
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+    return st
+
+
+def export_from_factors(infile: str, outfile: str, factors: dict) -> ExportStats:
+    """Write a factored GGUF using precomputed factors (e.g. finetuned).
+
+    factors: {gguf_base_name: (U[out,r], s[r], Vt[r,in])} for dense linears.
+    Tensors not in `factors` are copied verbatim.
+    """
+    reader, arch = ggufio.open_reader(infile)
+    writer = gguf.GGUFWriter(outfile, arch)
+    ggufio.copy_kv(reader, writer)
+    st = ExportStats()
+    for t in reader.tensors:
+        data = np.asarray(t.data)
+        base = t.name[: -len(".weight")] if t.name.endswith(".weight") else None
+        if (ggufio.target_kind(t.name) == "dense" and base in factors
+                and t.tensor_type == gguf.GGMLQuantizationType.F32):
+            U, s, Vt = factors[base]
+            st.factorized += 1
+            st.orig_params += data.size
+            st.new_params += U.size + s.size + Vt.size
+            writer.add_tensor(base + ".svd_u", U, raw_dtype=gguf.GGMLQuantizationType.F32)
+            writer.add_tensor(base + ".svd_s", s, raw_dtype=gguf.GGMLQuantizationType.F32)
+            writer.add_tensor(base + ".svd_vt", Vt, raw_dtype=gguf.GGMLQuantizationType.F32)
+        else:
+            if ggufio.target_kind(t.name):
+                st.orig_params += data.size
+                st.new_params += data.size
+            writer.add_tensor(t.name, data, raw_dtype=t.tensor_type)
     writer.write_header_to_file()
     writer.write_kv_data_to_file()
     writer.write_tensors_to_file()

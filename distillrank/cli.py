@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from . import evaltools, ggufio
-from .export_gguf import RankPolicy, export, _fmt
+from .export_gguf import RankPolicy, export, export_from_factors, _fmt
 
 
 def _load_stats(path):
@@ -33,6 +33,18 @@ def cmd_calibrate(args):
     print(f"[calibrate] {len(stats)} covariances -> {args.out}", file=sys.stderr)
 
 
+def cmd_finetune(args):
+    from transformers import AutoTokenizer
+    from .finetune import distill
+    tok = AutoTokenizer.from_pretrained(args.model_dir)
+    factors = distill(args.model_dir, [open(args.text).read()], tok, _policy(args),
+                      stats=_load_stats(args.stats), steps=args.steps, lr=args.lr,
+                      seqlen=args.seqlen, kd=not args.sft, device=args.device)
+    st = export_from_factors(args.base, args.outfile, factors)
+    ratio = st.new_params / max(st.orig_params, 1)
+    print(f"[finetune] factorized {st.factorized} layers -> {args.outfile} ({ratio:.2f}x)", file=sys.stderr)
+
+
 def _policy(args) -> RankPolicy:
     if getattr(args, "rank", None) is not None:
         return RankPolicy("fixed", args.rank)
@@ -45,7 +57,8 @@ def _policy(args) -> RankPolicy:
 
 def cmd_factorize(args):
     _, arch = ggufio.open_reader(args.infile)
-    st = export(args.infile, args.outfile, _policy(args), stats=_load_stats(args.stats))
+    st = export(args.infile, args.outfile, _policy(args), stats=_load_stats(args.stats),
+                merge=args.merge)
     print(_fmt(st, arch), file=sys.stderr)
 
 
@@ -111,6 +124,8 @@ def main(argv=None):
     f = sub.add_parser("factorize")
     f.add_argument("infile"); f.add_argument("outfile")
     f.add_argument("--stats", help="npz of activation covariances (activation-aware)")
+    f.add_argument("--merge", action="store_true",
+                   help="write reconstructed dense weights (stock-Ollama compatible, same size)")
     g = f.add_mutually_exclusive_group()
     g.add_argument("--rank", type=int); g.add_argument("--frac", type=float); g.add_argument("--energy", type=float)
     f.set_defaults(func=cmd_factorize)
@@ -118,6 +133,17 @@ def main(argv=None):
     e = sub.add_parser("eval")
     e.add_argument("model"); _add_eval_flags(e)
     e.set_defaults(func=cmd_eval)
+
+    ft = sub.add_parser("finetune")
+    ft.add_argument("model_dir"); ft.add_argument("base"); ft.add_argument("outfile")
+    ft.add_argument("text", help="finetuning/distillation text file")
+    ft.add_argument("--stats", help="npz covariances (activation-aware init)")
+    ft.add_argument("--steps", type=int, default=200); ft.add_argument("--lr", type=float, default=1e-4)
+    ft.add_argument("--seqlen", type=int, default=512); ft.add_argument("--device", default="auto")
+    ft.add_argument("--sft", action="store_true", help="use LM loss instead of KD from the original")
+    gg = ft.add_mutually_exclusive_group()
+    gg.add_argument("--rank", type=int); gg.add_argument("--frac", type=float); gg.add_argument("--energy", type=float)
+    ft.set_defaults(func=cmd_finetune)
 
     s = sub.add_parser("sweep")
     s.add_argument("base")

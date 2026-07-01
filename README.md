@@ -98,10 +98,32 @@ python -m distillrank sweep base.gguf --fracs 1 .75 .5 .25 --ppl data/eval/wiki.
   python -m distillrank factorize base.gguf out.gguf --frac 0.4 --stats runs/stats.npz
   ```
 
+- **M3 — finetune/distill recovery:** replace each block linear with a trainable low-rank
+  form (`ir.LowRankLinear`, init from the activation-aware factors), freeze the rest, and
+  finetune the factors to match the original model (KD) on unlabeled text. Export the
+  finetuned factors back to GGUF (q/k are permuted to GGUF's RoPE basis). At **frac 0.6**
+  (0.86× params) on SmolLM2-135M, 200 KD steps on CPU:
+
+  | stage | perplexity |
+  |---|---|
+  | base | 22.4 |
+  | plain SVD | 39,000,000 |
+  | activation-aware | 54.5 |
+  | **activation-aware + finetune** | **30.5** |
+
+  ```bash
+  python -m distillrank finetune models/SmolLM2-135M base.gguf out.gguf data/eval/wiki.test.raw \
+      --frac 0.6 --stats runs/stats.npz --steps 200 --device auto   # cuda/mps/cpu
+  ```
+  (More steps + a GPU + gentler ranks close the rest of the gap.)
+
 Modules: `factorize.py` (plain + `whiten_svd` activation-aware + rank policies + break-even),
-`calibrate.py` (per-linear covariance, HF→GGUF name map), `export_gguf.py` (factored-GGUF
-writer, dense + MoE), `evaltools.py` (llama-perplexity / llama-bench), `ggufio.py`, `cli.py`
-(`calibrate`/`factorize`/`eval`/`sweep`). M3–M4 add `finetune/` and a config `runner.py`.
+`calibrate.py` (per-linear covariance, HF→GGUF name map), `ir.py` (`LowRankLinear`),
+`finetune/distill.py` (KD, device-agnostic), `export_gguf.py` (factored + merged writer,
+dense + MoE), `evaltools.py` (llama-perplexity / llama-bench), `ggufio.py`, `cli.py`
+(`calibrate`/`factorize`/`finetune`/`eval`/`sweep`; `factorize --merge` writes reconstructed
+dense weights that run on **stock** Ollama for measurement). M4 adds a config `runner.py`
+and global rank-budget allocation.
 
 ## Layout
 
