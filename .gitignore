@@ -1,0 +1,9 @@
+# build artifacts and large data — not committed
+vendor/
+out/
+models/
+.ollama_models/
+.venv/
+__pycache__/
+*.gguf
+*.pyc
