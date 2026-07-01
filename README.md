@@ -62,6 +62,35 @@ gemma, phi, mistral, mixtral, qwen3-moe, …). The producer deliberately skips
 weights that bypass those ops (MLA `attn_*_a/_b`, SSM/conv), since they are not
 plain linear projections.
 
+## Phase 2 — compression pipeline (in progress)
+
+`distillrank/` is a modular pipeline that actually *shrinks* models: truncate the
+SVD rank, keep the factored form (which runs on the patched runtime), and measure
+the accuracy-vs-speed tradeoff. Milestone 1 (data-free) is in:
+
+```bash
+scripts/build_tools.sh            # build llama-perplexity + llama-bench (clean b9509 + svd patch)
+scripts/get_eval_data.sh          # wikitext / hellaswag / winogrande
+python -m distillrank factorize base.gguf out.gguf --energy 0.99   # or --frac / --rank
+python -m distillrank eval out.gguf --ppl data/eval/wiki.test.raw --speed
+python -m distillrank sweep base.gguf --fracs 1 .75 .5 .25 --ppl data/eval/wiki.test.raw --speed --out runs/s.csv
+```
+
+- **Break-even guard:** a matrix is only factorized when `r(m+n) < mn` — otherwise the
+  factored form would be *bigger*, so it's kept dense. (Full-rank factoring never shrinks.)
+- **Truncation math:** `r < min(m,n)` gives `r(m+n)` params vs `mn` and squeezes the matmul
+  through a width-`r` bottleneck → smaller **and** faster; the cost is approximation error.
+- **First finding:** plain data-free SVD is brutal on a small dense model. On SmolLM2-135M,
+  fracs ≥ 0.5 are no-ops (break-even keeps them dense) and below that quality collapses
+  (perplexity 16.7 → 1e7). This is the known weakness of weight-only SVD and the motivation
+  for the next milestones: **activation-aware** truncation (M2) and **finetune/distill
+  recovery** (M3). Larger models with rectangular FFNs compress far better.
+
+Modules: `factorize.py` (SVD + rank policies + break-even), `export_gguf.py`
+(factored-GGUF writer, dense + MoE), `evaltools.py` (llama-perplexity / llama-bench
+wrappers), `ggufio.py`, `cli.py`. M2–M4 add `calibrate.py`, activation-aware factorizers,
+`finetune/`, and a config-driven `runner.py`.
+
 ## Layout
 
 | path | purpose |

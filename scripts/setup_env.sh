@@ -26,7 +26,7 @@ export PATH="/home/franklynece/.local/go/bin:$PATH"
 pip install --quiet --upgrade pip
 pip install --quiet numpy gguf safetensors huggingface_hub cmake \
     torch --extra-index-url https://download.pytorch.org/whl/cpu
-pip install --quiet transformers sentencepiece
+pip install --quiet transformers sentencepiece datasets accelerate pyyaml
 
 # --- sources ---
 mkdir -p vendor
@@ -46,6 +46,8 @@ git apply --reverse --check "$ROOT/patches/svd-generic.patch" 2>/dev/null \
 popd >/dev/null
 
 echo "Setup complete. Next:"
-echo "  scripts/build_ollama.sh     # build the patched Ollama"
-echo "  scripts/make_models.sh      # download Qwen2.5-0.5B and produce GGUFs"
-echo "  ./verify.sh                 # check factorized == baseline"
+echo "  scripts/build_ollama.sh     # build the patched Ollama (factored inference)"
+echo "  scripts/build_tools.sh      # build llama-perplexity + llama-bench (eval)"
+echo "  scripts/make_models.sh      # download a model and produce baseline GGUFs"
+echo "  scripts/get_eval_data.sh    # fetch wikitext / hellaswag / winogrande"
+echo "  python -m distillrank sweep out/<name>-base-f32.gguf --fracs 1 .75 .5 .25 --ppl data/eval/wiki.test.raw --speed"

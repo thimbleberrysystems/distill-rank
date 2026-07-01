@@ -2,6 +2,8 @@
 vendor/
 out/
 models/
+runs/
+data/
 .ollama_models/
 .venv/
 __pycache__/
