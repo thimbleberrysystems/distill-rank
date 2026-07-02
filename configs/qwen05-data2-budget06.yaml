@@ -1,0 +1,18 @@
+# Control: data-only calibration, same tiny 2-seq budget as the hybrid.
+name: qwen05-data2-budget0.6
+model:
+  dir: models/Qwen2.5-0.5B
+  base_gguf: out/qwen2.5-0.5b-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: data
+  text: data/eval/wiki.test.raw
+  seqs: 2
+  seqlen: 256
+  device: cpu
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256

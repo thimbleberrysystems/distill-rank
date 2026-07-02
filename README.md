@@ -136,6 +136,77 @@ Modules: `factorize.py` (plain + `whiten_svd` activation-aware + rank policies +
 (`run`/`plan`/`calibrate`/`factorize`/`finetune`/`eval`/`sweep`; `factorize --merge` writes
 reconstructed dense weights that run on **stock** Ollama for measurement).
 
+## Phase 3 — zero-data analytic whitening (novel)
+
+Activation-aware whitening (M2) needs calibration text. Phase 3 asks: **can the
+whitening covariance be derived from the model's own weights, with zero
+calibration data?** Prior work reduces calibration data (AIR: "90% less"); as
+far as we can tell nobody eliminates it. Two zero-data calibration sources, plus
+a hybrid, all emitting the same `stats.npz` the rest of the pipeline consumes:
+
+- **Token prior** (no corpus needed): `uniform`, `zipf` over token id, or
+  `merge_rank` — BPE merges are emitted in training-corpus frequency order, so a
+  token minted at merge rank *r* gets `p ∝ 1/(r+r₀)`. A genuine zero-data
+  frequency estimate read straight out of `tokenizer.json`. On SmolLM2's layer-0
+  (where the exact H under a prior is computable with *no* propagation),
+  merge_rank > zipf > uniform on every metric (top-32 energy capture 0.81).
+- **`random_tokens`**: sample token *ids* from the prior, forward them with the
+  ordinary calibration hooks. Zero data, embarrassingly simple.
+- **`analytic` (mc)**: propagate the residual stream's Gaussian moments layer by
+  layer — sample from the analytic `N(μ_l, Σ_l)`, push through the *real*
+  decoder layer, re-fit moments, repeat. Fully data-free, but Gaussianization
+  turns out to destroy the heavy-tailed activation structure the FFN whitening
+  needs (an informative negative result — see table).
+- **`hybrid`**: `H = λ·Ĥ_analytic + (1−λ)·H_data(k seqs)` with trace matching —
+  the analytic covariance as a **shrinkage prior** over a tiny sample covariance
+  (Ledoit–Wolf flavor).
+
+Results (SmolLM2-135M, global budget 0.6× params, wikitext PPL, base 22.4):
+
+| calibration source | calib tokens | perplexity |
+|---|---|---|
+| plain SVD (no whitening) | 0 | 21,838,070 |
+| analytic mc | 0 | 68,304 |
+| **random_tokens (merge_rank prior)** | **0** | **22,682** (~960× better than plain) |
+| data, 2 seqs | 512 | 2,378 |
+| data, 24 seqs (Phase-2 reference) | 12,288 | 3,632 |
+| **hybrid: analytic + 2 seqs, λ=0.5** | **512** | **434** |
+
+Replicated on a second architecture — Qwen2.5-0.5B, budget 0.6×, base PPL 19.0:
+
+| calibration source | calib tokens | perplexity |
+|---|---|---|
+| random_tokens (merge_rank prior) | 0 | 1,185 |
+| data, 2 seqs | 512 | 863 |
+| **hybrid: analytic + 2 seqs, λ=0.5** | **512** | **210** |
+
+Two headline findings:
+
+1. **Zero data gets you 3 orders of magnitude.** Whitening against random tokens
+   sampled from the tokenizer's own merge-rank prior recovers most of the benefit
+   of activation-aware compression without a single byte of calibration text.
+2. **The analytic prior beats real calibration.** Blending the analytic
+   covariance with just 512 real tokens (PPL 434) outperforms full 12k-token
+   calibration (PPL 3,632) by 8×, and its own 512-token data leg (PPL 2,378) by
+   5.5× — small-sample covariances are noisy in 1536 dims, and the analytic H
+   regularizes exactly the directions the sample can't estimate.
+
+```bash
+python -m distillrank calibrate-analytic models/SmolLM2-135M runs/analytic.npz \
+    --mode random_tokens --prior merge_rank            # zero-data covariances
+python -m distillrank stats-diff runs/analytic.npz runs/smol-stats.npz \
+    --gguf out/smollm2-135m-base-f32.gguf              # diagnose vs measured stats
+python -m distillrank run configs/smollm2-hybrid-budget06.yaml   # best result above
+```
+
+New: `analytic.py` (priors, exact layer-0 H, moment propagation, `mix_stats`,
+diagnostics); `calibration.source: data | analytic | random_tokens | hybrid` in
+run configs; CLI `calibrate-analytic` + `stats-diff`. A caveat we measured: at
+tiny sample counts the subspace-overlap metrics are dominated by estimation
+noise (even *real* 2k-token stats only capture 0.25–0.42 of the reference
+`ffn_down` energy), so end-to-end PPL — not covariance similarity — is the
+arbiter.
+
 ## Layout
 
 | path | purpose |

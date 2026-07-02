@@ -1,0 +1,19 @@
+# Zero-data baseline: random tokens sampled from a prior (no calibration text).
+#   python -m distillrank run configs/smollm2-randtok-budget06.yaml
+name: smollm2-randtok-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: random_tokens
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true

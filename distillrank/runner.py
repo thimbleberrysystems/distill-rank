@@ -28,6 +28,36 @@ def _rank_policy(base_gguf: str, spec: dict, stats: dict | None = None) -> RankP
     return RankPolicy(kind, float(spec.get("value", 1.0)))
 
 
+def _calibrate_data(model_dir: str, cal: dict) -> dict:
+    from transformers import AutoTokenizer
+    from .calibrate import collect_covariance
+    tok = AutoTokenizer.from_pretrained(model_dir)
+    return collect_covariance(model_dir, [open(cal["text"]).read()], tok,
+                              seqlen=cal.get("seqlen", 512), max_seqs=cal.get("seqs", 128),
+                              device=cal.get("device", "auto"))
+
+
+def _calibrate(model_dir: str, cal: dict) -> dict:
+    """Dispatch on calibration.source: data (default, unchanged) | analytic |
+    random_tokens | hybrid (analytic blended with a small data calibration)."""
+    source = cal.get("source", "data")
+    if source == "data":
+        return _calibrate_data(model_dir, cal)
+    from .analytic import analytic_covariance, mix_stats
+    kw = dict(prior=cal.get("prior", "merge_rank"), zipf_s=cal.get("zipf_s", 1.0),
+              samples=cal.get("samples", 16384), seqlen=cal.get("seqlen", 256),
+              rho=cal.get("rho", 0.0), seed=cal.get("seed", 0),
+              device=cal.get("device", "cpu"))
+    if source in ("analytic", "random_tokens"):
+        return analytic_covariance(model_dir, mode=cal.get("mode", "mc")
+                                   if source == "analytic" else "random_tokens", **kw)
+    if source == "hybrid":
+        h_a = analytic_covariance(model_dir, mode=cal.get("mode", "mc"), **kw)
+        h_d = _calibrate_data(model_dir, cal)
+        return mix_stats(h_a, h_d, float(cal.get("lambda", 0.5)))
+    raise ValueError(f"unknown calibration source: {source}")
+
+
 def run(cfg: dict) -> dict:
     name = cfg["name"]
     out_dir = Path(cfg.get("out_dir", "runs")) / name
@@ -47,14 +77,9 @@ def run(cfg: dict) -> dict:
     stats = None
     if needs_stats:
         cal = cfg["calibration"]
-        from transformers import AutoTokenizer
-        from .calibrate import collect_covariance
-        tok = AutoTokenizer.from_pretrained(model["dir"])
-        stats = collect_covariance(model["dir"], [open(cal["text"]).read()], tok,
-                                   seqlen=cal.get("seqlen", 512), max_seqs=cal.get("seqs", 128),
-                                   device=cal.get("device", "auto"))
+        stats = _calibrate(model["dir"], cal)
         np.savez_compressed(out_dir / "stats.npz", **stats)
-        print(f"[run] calibrated {len(stats)} layers")
+        print(f"[run] calibrated {len(stats)} layers ({cal.get('source', 'data')})")
 
     policy = _rank_policy(base_gguf, rank_spec, stats)
     gguf_out = str(out_dir / "model.gguf")

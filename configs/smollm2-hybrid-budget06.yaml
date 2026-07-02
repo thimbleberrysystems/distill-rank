@@ -1,0 +1,23 @@
+# Hybrid: analytic covariance blended with a tiny data calibration (2 seqs).
+#   python -m distillrank run configs/smollm2-hybrid-budget06.yaml
+name: smollm2-hybrid-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: hybrid
+  lambda: 0.5
+  mode: mc
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  text: data/eval/wiki.test.raw
+  seqs: 2
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true

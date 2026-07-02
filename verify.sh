@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA="$ROOT/vendor/ollama/ollama"
 export OLLAMA_HOST="127.0.0.1:11435"
-export OLLAMA_MODELS="$ROOT/.ollama_models"
+export OLLAMA_MODELS="${OLLAMA_MODELS:-/mnt/d/Work/ollama}"
 export PATH="/home/franklynece/.local/go/bin:$PATH"
 mkdir -p "$OLLAMA_MODELS"
 

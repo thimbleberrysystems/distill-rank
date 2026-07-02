@@ -45,6 +45,38 @@ def cmd_calibrate(args):
     print(f"[calibrate] {len(stats)} covariances -> {args.out}", file=sys.stderr)
 
 
+def cmd_calibrate_analytic(args):
+    from .analytic import analytic_covariance
+    stats = analytic_covariance(args.model_dir, prior=args.prior, zipf_s=args.zipf_s,
+                                mode=args.mode, samples=args.samples, seqlen=args.seqlen,
+                                rho=args.rho, seed=args.seed, device=args.device)
+    np.savez_compressed(args.out, **stats)
+    print(f"[analytic] {len(stats)} covariances ({args.mode}/{args.prior}) -> {args.out}",
+          file=sys.stderr)
+
+
+def cmd_stats_diff(args):
+    from .analytic import compare_stats, whitened_agreement
+    a, b = _load_stats(args.a), _load_stats(args.b)
+    rows = [{"key": k, **m} for k, m in compare_stats(a, b, topk=args.topk).items()]
+    if args.gguf:
+        wa = whitened_agreement(args.gguf, a, b, tau=args.tau)
+        for r in rows:
+            r.update(wa.get(r["key"], {}))
+    for r in rows:
+        print("  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
+                        for k, v in r.items()))
+    vals = [r["energy_capture"] for r in rows]
+    print(f"[stats-diff] {len(rows)} keys  median energy_capture="
+          f"{np.median(vals):.3f}  min={min(vals):.3f}", file=sys.stderr)
+    if args.csv:
+        keys = sorted({k for r in rows for k in r})
+        with open(args.csv, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=keys)
+            w.writeheader(); w.writerows(rows)
+        print(f"wrote {args.csv}", file=sys.stderr)
+
+
 def cmd_finetune(args):
     from transformers import AutoTokenizer
     from .finetune import distill
@@ -138,6 +170,24 @@ def main(argv=None):
     c.add_argument("--seqlen", type=int, default=512); c.add_argument("--seqs", type=int, default=128)
     c.add_argument("--device", default="auto")
     c.set_defaults(func=cmd_calibrate)
+
+    ca = sub.add_parser("calibrate-analytic", help="zero-data covariances from weights alone")
+    ca.add_argument("model_dir"); ca.add_argument("out")
+    ca.add_argument("--prior", default="merge_rank", choices=["uniform", "zipf", "merge_rank"])
+    ca.add_argument("--zipf-s", type=float, default=1.0)
+    ca.add_argument("--mode", default="mc", choices=["mc", "random_tokens"])
+    ca.add_argument("--samples", type=int, default=16384); ca.add_argument("--seqlen", type=int, default=256)
+    ca.add_argument("--rho", type=float, default=0.0, help="AR(1) token correlation of MC samples")
+    ca.add_argument("--seed", type=int, default=0); ca.add_argument("--device", default="cpu")
+    ca.set_defaults(func=cmd_calibrate_analytic)
+
+    sd = sub.add_parser("stats-diff", help="compare two covariance npz files")
+    sd.add_argument("a", help="analytic/candidate npz"); sd.add_argument("b", help="reference npz")
+    sd.add_argument("--topk", type=int, default=32)
+    sd.add_argument("--gguf", help="base GGUF: also compare whitened-spectrum induced ranks")
+    sd.add_argument("--tau", type=float, default=0.9)
+    sd.add_argument("--csv", help="write per-key metrics CSV")
+    sd.set_defaults(func=cmd_stats_diff)
 
     f = sub.add_parser("factorize")
     f.add_argument("infile"); f.add_argument("outfile")

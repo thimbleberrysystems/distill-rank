@@ -40,16 +40,13 @@ def gguf_name(module_name: str) -> str | None:
     return None
 
 
-def collect_covariance(model_dir: str, texts: list[str], tokenizer, *,
-                       seqlen: int = 512, max_seqs: int = 128, device: str = "auto") -> dict:
-    """Return {gguf_name: H (float32 [in,in] numpy)} accumulated over the calibration set."""
-    from transformers import AutoModelForCausalLM
+def attach_cov_hooks(model) -> tuple[dict, list]:
+    """Register H += xᵀx forward hooks on every target Linear.
 
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = AutoModelForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float32)
-    model.to(device).eval()
-
+    Returns (accumulator {gguf_name: torch [in,in]}, hook handles). Shared by the
+    data path below and the analytic/random-token paths in analytic.py so all
+    calibration sources accumulate identically.
+    """
     H: dict[str, torch.Tensor] = {}
     handles = []
 
@@ -67,14 +64,34 @@ def collect_covariance(model_dir: str, texts: list[str], tokenizer, *,
             g = gguf_name(name)
             if g is not None:
                 handles.append(mod.register_forward_hook(make_hook(g)))
+    return H, handles
 
-    # build fixed-length token windows from the calibration text
-    ids = tokenizer("\n\n".join(texts), return_tensors="pt").input_ids[0]
-    n = min(max_seqs, ids.shape[0] // seqlen)
+
+def collect_covariance(model_dir: str, texts: list[str], tokenizer, *,
+                       seqlen: int = 512, max_seqs: int = 128, device: str = "auto",
+                       token_ids: "torch.Tensor | None" = None) -> dict:
+    """Return {gguf_name: H (float32 [in,in] numpy)} accumulated over the calibration set.
+
+    token_ids overrides the text pipeline with a pre-built [n_seqs, seqlen] id
+    tensor (used by the zero-data random-token calibration source).
+    """
+    from transformers import AutoModelForCausalLM
+
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = AutoModelForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float32)
+    model.to(device).eval()
+
+    H, handles = attach_cov_hooks(model)
+
+    if token_ids is None:
+        # build fixed-length token windows from the calibration text
+        ids = tokenizer("\n\n".join(texts), return_tensors="pt").input_ids[0]
+        n = min(max_seqs, ids.shape[0] // seqlen)
+        token_ids = torch.stack([ids[i * seqlen:(i + 1) * seqlen] for i in range(n)])
     with torch.no_grad():
-        for i in range(n):
-            chunk = ids[i * seqlen:(i + 1) * seqlen].unsqueeze(0).to(device)
-            model(chunk)
+        for chunk in token_ids:
+            model(chunk.unsqueeze(0).to(device))
 
     for h in handles:
         h.remove()
