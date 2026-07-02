@@ -191,6 +191,16 @@ Two headline findings:
    5.5× — small-sample covariances are noisy in 1536 dims, and the analytic H
    regularizes exactly the directions the sample can't estimate.
 
+Ablation (`scripts/sweep_hybrid.py` → `runs/hybrid-sweep.csv`): λ=0.5 is
+near-optimal at every data budget, and the prior is worth ~8× data — SmolLM2
+PPL at budget 0.6, λ across columns:
+
+| calib tokens | λ=0 (data only) | λ=0.25 | λ=0.5 | λ=0.75 | λ=1 (analytic only) |
+|---|---|---|---|---|---|
+| 256 | 1,697 | 719 | **531** | 611 | 68,302 |
+| 512 | 2,378 | 446 | **434** | 617 | 68,298 |
+| 2,048 | 1,025 | 289 | **276** | 304 | 68,307 |
+
 ```bash
 python -m distillrank calibrate-analytic models/SmolLM2-135M runs/analytic.npz \
     --mode random_tokens --prior merge_rank            # zero-data covariances
