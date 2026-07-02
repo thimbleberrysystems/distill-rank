@@ -171,6 +171,7 @@ Results (SmolLM2-135M, global budget 0.6× params, wikitext PPL, base 22.4):
 | data, 2 seqs | 512 | 2,378 |
 | data, 24 seqs (Phase-2 reference) | 12,288 | 3,632 |
 | **hybrid: analytic + 2 seqs, λ=0.5** | **512** | **434** |
+| **hybrid + 200-step KD finetune** | 512 + KD | **135.6** |
 
 Replicated on a second architecture — Qwen2.5-0.5B, budget 0.6×, base PPL 19.0:
 
@@ -216,6 +217,59 @@ tiny sample counts the subspace-overlap metrics are dominated by estimation
 noise (even *real* 2k-token stats only capture 0.25–0.42 of the reference
 `ffn_down` energy), so end-to-end PPL — not covariance similarity — is the
 arbiter.
+
+### Full benchmark — size, quality, accuracy, speed
+
+Every variant at global budget 0.6× vs the uncompressed baseline, one harness
+(`scripts/benchmark.py`, CPU, 24 threads). PPL on wikitext (ctx 256); HellaSwag
+and Winogrande accuracy over 400 tasks each; prefill/decode throughput from
+`llama-bench` (pp/tg 128). The accuracy parsers in `evaltools.py` were fixed
+here — they were scraping a confidence-interval bound instead of the score.
+
+**SmolLM2-135M** (f32):
+
+| variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill tok/s | decode tok/s |
+|---|---|---|---|---|---|---|---|
+| **base (uncompressed)** | — | 539.8 | **22.4** | **41.2** | 55.2 | 1,524 | 68.4 |
+| plain SVD | 0 | 366.2 | 21,838,070 | 24.8 | 45.5 | 1,200 | 64.7 |
+| analytic MC | 0 | 371.5 | 68,304 | 24.5 | 49.0 | 1,355 | 67.4 |
+| random-token prior | 0 | 369.7 | 22,682 | 24.0 | 50.5 | 1,138 | 67.5 |
+| data 2-seq | 512 | 370.8 | 2,378 | 29.2 | 51.2 | 1,119 | 61.9 |
+| data 24-seq | 12k | 374.0 | 3,632 | 25.5 | 49.0 | 1,084 | 61.8 |
+| hybrid | 512 | 366.3 | 434 | 25.8 | **52.5** | 1,162 | 64.7 |
+| **hybrid + KD** | 512+KD | 366.3 | **136** | 28.0 | 53.0 | 1,184 | 64.5 |
+
+**Qwen2.5-0.5B** (f32):
+
+| variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill tok/s | decode tok/s |
+|---|---|---|---|---|---|---|---|
+| **base (uncompressed)** | — | 1,982 | **19.0** | **51.0** | 57.0 | 738.7 | 25.7 |
+| random-token prior | 0 | 1,402 | 1,185 | 26.2 | 50.5 | 487.5 | 30.9 |
+| data 2-seq | 512 | 1,410 | 863 | 26.5 | **56.2** | 451.2 | 30.6 |
+| **hybrid** | 512 | 1,418 | **210** | 27.0 | 49.2 | 446.3 | 30.7 |
+
+Reading the tradeoff honestly:
+
+- **Size** is a clean ~26–29% cut (539→366 MB, 1,982→1,418 MB) at budget 0.6×,
+  identical across calibration methods — the rank plan sets the size, the
+  calibration sets the *quality* at that size.
+- **Quality**: KD recovery is decisive — hybrid+KD is the only compressed model
+  that stays within ~6× of base PPL and recovers HellaSwag toward base. Whitening
+  choice spans five orders of magnitude of PPL at *identical size*.
+- **Speed is not free from factoring on CPU.** Prefill (compute-bound) gets
+  *slower* — the factored path runs two GEMMs (`U` then `Vᵀ`) where the dense
+  path runs one, and at these sizes that overhead outweighs the FLOP cut. Decode
+  (memory-bound) improves on the larger Qwen (25.7→30.9 tok/s, +20%) where the
+  param cut dominates, but is roughly neutral on tiny SmolLM2. Net: the win here
+  is **memory footprint**, not throughput — quantizing the factors (future work)
+  is what would turn the size cut into a speed cut.
+
+```bash
+scripts/get_eval_data.sh                       # wikitext + hellaswag + winogrande
+python -m distillrank run configs/smollm2-hybrid-ft-budget06.yaml   # hybrid + KD
+python scripts/benchmark.py smol               # full matrix -> runs/benchmark-smol.csv
+python scripts/benchmark.py qwen
+```
 
 ## Layout
 

@@ -20,7 +20,7 @@ fi
 [ -f "$D/hellaswag_val_full.txt" ] || curl -sL -o "$D/hellaswag_val_full.txt" \
     https://raw.githubusercontent.com/klosax/hellaswag_text_data/main/hellaswag_val_full.txt
 
-[ -f "$D/winogrande-debiased-eval.csv" ] || curl -sL -o "$D/winogrande-debiased-eval.csv" \
-    https://huggingface.co/datasets/ggml-org/ci/resolve/main/winogrande-debiased-eval.csv
+[ -s "$D/winogrande-debiased-eval.csv" ] || curl -sL -o "$D/winogrande-debiased-eval.csv" \
+    https://huggingface.co/datasets/ikawrakow/winogrande-eval-for-llama.cpp/resolve/main/winogrande-debiased-eval.csv
 
 echo "Eval data in $D:"; ls -la "$D"

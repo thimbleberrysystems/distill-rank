@@ -44,21 +44,27 @@ def perplexity(model: str, text_file: str, ctx: int = 512, threads: int | None =
     return float(m.group(1))
 
 
+def _last_running_score(out: str) -> float:
+    """Both --hellaswag and --winogrande print one row per task as
+    `<task>\\t<running_accuracy>[%]\\t...`; the final cumulative accuracy is the
+    running value on the last such row."""
+    accs = re.findall(r"(?m)^\s*\d+\t([0-9]+\.[0-9]+)", out)
+    return float(accs[-1]) if accs else float("nan")
+
+
 def hellaswag(model: str, data_file: str, tasks: int = 400, ctx: int = 1024) -> float:
     """Return accuracy (%) on HellaSwag."""
     out = _run([_bin("llama-perplexity"), "-m", model, "-bf", data_file,
                 "--hellaswag", "--hellaswag-tasks", str(tasks), "-c", str(ctx)])
-    accs = re.findall(r"\b([0-9]{1,3}\.[0-9]+)\b", out)
-    return float(accs[-1]) if accs else float("nan")
+    return _last_running_score(out)
 
 
 def winogrande(model: str, data_file: str, tasks: int = 0, ctx: int = 1024) -> float:
+    """Return accuracy (%) on Winogrande."""
     cmd = [_bin("llama-perplexity"), "-m", model, "-f", data_file, "--winogrande", "-c", str(ctx)]
     if tasks:
         cmd += ["--winogrande-tasks", str(tasks)]
-    out = _run(cmd)
-    accs = re.findall(r"\b([0-9]{1,3}\.[0-9]+)\b", out)
-    return float(accs[-1]) if accs else float("nan")
+    return _last_running_score(_run(cmd))
 
 
 def speed(model: str, n_prompt: int = 128, n_gen: int = 128, threads: int | None = None) -> dict:

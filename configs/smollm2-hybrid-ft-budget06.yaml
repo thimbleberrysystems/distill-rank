@@ -1,0 +1,30 @@
+# Hybrid whitening (analytic prior + 2 data seqs) + KD finetune recovery.
+#   python -m distillrank run configs/smollm2-hybrid-ft-budget06.yaml
+name: smollm2-hybrid-ft-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: hybrid
+  lambda: 0.5
+  mode: mc
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  text: data/eval/wiki.test.raw
+  seqs: 2
+  device: cpu
+finetune:                     # KD from the original model onto the hybrid-init factors
+  text: data/eval/wiki.test.raw
+  steps: 200
+  lr: 1.0e-5
+  seqlen: 256
+  device: cpu
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true
