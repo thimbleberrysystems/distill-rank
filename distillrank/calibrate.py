@@ -15,8 +15,12 @@ import re
 import numpy as np
 import torch
 
-# HF module-name suffix -> GGUF tensor base (llama/qwen2 family naming)
+# HF module-name suffix -> GGUF tensor base. Covers the llama/qwen/gemma family
+# (separate q/k/v, gate/up) and phi3-style fused projections (qkv_proj, gate_up_proj).
+# Order matters: check the fused names before the shorter suffixes they contain.
 _HF2GGUF = {
+    "qkv_proj": "attn_qkv",       # phi3 fused QKV
+    "gate_up_proj": "ffn_up",     # phi3 fused gate+up (GGUF stores as ffn_up)
     "q_proj": "attn_q", "k_proj": "attn_k", "v_proj": "attn_v", "o_proj": "attn_output",
     "gate_proj": "ffn_gate", "up_proj": "ffn_up", "down_proj": "ffn_down",
 }
