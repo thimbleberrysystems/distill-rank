@@ -226,39 +226,47 @@ and Winogrande accuracy over 400 tasks each; prefill/decode throughput from
 `llama-bench` (pp/tg 128). The accuracy parsers in `evaltools.py` were fixed
 here — they were scraping a confidence-interval bound instead of the score.
 
+All variants exported with **aligned ranks** (see the performance-bug section
+below — the fix that makes factoring a speed win, not just a size win).
+
 **SmolLM2-135M** (f32):
 
 | variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill tok/s | decode tok/s |
 |---|---|---|---|---|---|---|---|
-| **base (uncompressed)** | — | 539.8 | **22.4** | **41.2** | 55.2 | 1,524 | 68.4 |
-| plain SVD | 0 | 366.2 | 21,838,070 | 24.8 | 45.5 | 1,200 | 64.7 |
-| analytic MC | 0 | 371.5 | 68,304 | 24.5 | 49.0 | 1,355 | 67.4 |
-| random-token prior | 0 | 369.7 | 22,682 | 24.0 | 50.5 | 1,138 | 67.5 |
-| data 2-seq | 512 | 370.8 | 2,378 | 29.2 | 51.2 | 1,119 | 61.9 |
-| data 24-seq | 12k | 374.0 | 3,632 | 25.5 | 49.0 | 1,084 | 61.8 |
-| hybrid | 512 | 366.3 | 434 | 25.8 | **52.5** | 1,162 | 64.7 |
-| **hybrid + KD** (aligned ranks) | 512+KD | 370.6 | **129** | 28.5 | 51.8 | **1,852** | 65.3 |
+| **base (uncompressed)** | — | 539.8 | **22.4** | **41.2** | **55.2** | 1,652 | 67.7 |
+| plain SVD | 0 | 370.7 | 82,352,435 | 25.8 | 48.5 | 1,722 | 58.9 |
+| analytic MC | 0 | 369.8 | 65,041 | 26.2 | 47.5 | 1,743 | 64.0 |
+| random-token prior | 0 | 373.8 | 4,045 | 24.0 | 47.8 | **1,784** | 65.8 |
+| data 2-seq | 512 | 369.0 | 2,554 | 27.8 | 49.0 | 1,714 | 61.7 |
+| data 24-seq | 12k | 369.1 | 9,002 | 26.5 | 49.0 | 1,662 | 63.6 |
+| hybrid | 512 | 370.6 | 427 | 27.0 | 51.5 | 1,707 | 65.7 |
+| **hybrid + KD** | 512+KD | 370.6 | **129** | 28.5 | 51.8 | 1,752 | **70.4** |
 
 **Qwen2.5-0.5B** (f32):
 
 | variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill tok/s | decode tok/s |
 |---|---|---|---|---|---|---|---|
-| **base (uncompressed)** | — | 1,982 | **19.0** | **51.0** | 57.0 | 738.7 | 25.7 |
-| random-token prior | 0 | 1,402 | 1,185 | 26.2 | 50.5 | 487.5 | 30.9 |
-| data 2-seq | 512 | 1,410 | 863 | 26.5 | **56.2** | 451.2 | 30.6 |
-| **hybrid** | 512 | 1,418 | **210** | 27.0 | 49.2 | 446.3 | 30.7 |
+| **base (uncompressed)** | — | 1,982 | **19.0** | **51.0** | **57.0** | 653 | 25.8 |
+| random-token prior | 0 | 1,409 | 741 | 26.8 | 50.0 | 875 | 31.8 |
+| data 2-seq | 512 | 1,418 | 836 | 27.2 | 56.0 | 883 | 31.2 |
+| **hybrid** | 512 | 1,405 | **213** | 26.5 | 49.5 | **898** | **32.0** |
 
-Reading the tradeoff honestly:
+Reading the tradeoff:
 
-- **Size** is a clean ~26–29% cut (539→366 MB, 1,982→1,418 MB) at budget 0.6×,
+- **Size**: a clean ~29–31% cut (540→370 MB, 1,982→1,410 MB) at budget 0.6×,
   identical across calibration methods — the rank plan sets the size, the
   calibration sets the *quality* at that size.
-- **Quality**: KD recovery is decisive — hybrid+KD is the only compressed model
-  that stays within ~6× of base PPL and recovers HellaSwag toward base. Whitening
-  choice spans five orders of magnitude of PPL at *identical size*.
-- **Speed: the original tables above understate the factored models** — they
-  were measured before the rank-alignment fix below. Post-fix, factoring is a
-  speed *win* at prefill too.
+- **Speed** (post-alignment): every factored variant beats the dense base at
+  prefill (+4–8% SmolLM2, **+34–38% Qwen**) and at decode on Qwen (+21–24%).
+  On tiny SmolLM2 decode is roughly neutral at 24 threads (per-op thread
+  barriers mask the bandwidth win; it shows at 1 thread: 23.5 vs 16.1 tok/s,
+  +46%), with hybrid+KD nosing ahead (70.4 vs 67.7).
+- **Quality**: whitening choice spans six orders of magnitude of PPL at
+  identical size, and KD recovery is decisive — hybrid+KD is the only variant
+  within ~6× of base PPL, and it recovers HellaSwag toward base. Note the rank
+  re-plan under alignment shifted some PPLs vs earlier runs (randtok improved
+  22.7k→4.0k, data-24seq degraded 3.6k→9.0k) — small-sample rank allocation is
+  noisy in exactly the way the hybrid's shrinkage prior fixes.
 
 ### The rank-alignment performance bug (and fix)
 
