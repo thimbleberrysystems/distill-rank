@@ -5,6 +5,18 @@ Ollama/llama.cpp — plus a zero-data calibration method that derives the
 activation-aware whitening covariance from the model's own weights and
 tokenizer, with no calibration text at all.**
 
+```mermaid
+flowchart LR
+    HF["HF model<br/>(safetensors)"] --> GG["base GGUF"]
+    GG --> SVD["each linear W [out,in]<br/>thin SVD → U · diag(s) · Vᵀ"]
+    CAL["calibration<br/>data · zero-data · hybrid"] -. "picks whitening<br/>+ per-layer rank" .-> SVD
+    SVD --> TR["truncate rank r<br/>r(out+in) &lt; out·in"]
+    TR --> FAC["factored GGUF<br/>U / s / Vᵀ per linear"]
+    FAC --> RT["patched Ollama / llama.cpp<br/>build_lora_mm: U·(s ⊙ Vᵀx)"]
+    RT --> OUT["smaller + faster<br/>native factored execution"]
+    KD["KD finetune<br/>(optional recovery)"] -. "trains factors" .-> FAC
+```
+
 The repository contains three things:
 
 1. **A factored-execution runtime** (Phase 1): a ~108-line, architecture-agnostic
@@ -228,7 +240,30 @@ magnitude of perplexity, so its data dependence matters.
 
 All Phase-3 estimators emit the same `{gguf_name: H}` dict the rest of the
 pipeline consumes; nothing downstream changes. Selected per run by
-`calibration.source: data | random_tokens | analytic | hybrid`.
+`calibration.source: data | random_tokens | analytic | hybrid`. The variants
+differ only in how they source that covariance — spanning zero data to a tiny
+sample to KD recovery (SmolLM2-135M, 0.60× budget, PPL shown; base = 22.4):
+
+```mermaid
+flowchart LR
+    W["compress W<br/>at 0.60× budget"] --> C{"where does the<br/>whitening H come from?"}
+
+    C --> Z["zero calibration data"]
+    C --> D["+ 512 real tokens"]
+
+    Z --> P["plain SVD<br/>no whitening<br/>PPL 8.2e7"]
+    Z --> R["random-token prior<br/>ids ~ merge-rank freq<br/>PPL 4,045"]
+    Z --> A["analytic MC<br/>Gaussian moment prop.<br/>PPL 65,041"]
+
+    D --> V["activation-aware<br/>real xxᵀ (SVD-LLM)<br/>PPL 2,554"]
+    D --> H["hybrid ★<br/>analytic prior + data<br/>(shrinkage) · PPL 427"]
+
+    A -. "prior" .-> H
+    H --> K["+ KD finetune<br/>PPL 129"]
+
+    classDef best fill:#1f6f3f,color:#fff,stroke:#0d3;
+    class H,K best;
+```
 
 ### Token priors (`analytic.token_prior`)
 
