@@ -92,8 +92,10 @@ cited inline so the reader can judge.
    the samples through the *real* decoder layers, re-fitting moments after each
    layer. It works (65k PPL vs 8×10⁷ plain) but is ~3× *worse* than simply
    sampling random token ids: **moment-matched Gaussianization destroys the
-   heavy-tailed activation structure that FFN whitening depends on.** No prior
-   art found for either the method or the finding.
+   heavy-tailed activation structure that FFN whitening depends on.** A companion
+   experiment shows pure random *noise* does worse than no whitening at all —
+   whitening needs covariance *directions*, which only real embeddings provide.
+   No prior art found for either the method or the finding.
 
 4. **The factored-execution runtime.** Compression papers simulate low-rank
    inference in PyTorch and report parameter counts; here the factors are the
@@ -296,6 +298,34 @@ energy capture 0.81 / 0.80 / 0.78 against measured stats).
 - **`hybrid`** — `H = λ·Ĥ_analytic·(tr H_d / tr Ĥ) + (1−λ)·H_data(k seqs)`:
   the analytic covariance as a shrinkage prior [15] over a tiny sample
   covariance.
+
+### What about pure random noise? (second negative result)
+
+A natural question: if random *tokens* work, why not skip the tokenizer and use
+random *noise* as calibration? Because whitening needs the covariance's
+*directions*, and noise has none. Injecting isotropic Gaussian noise (matched to
+the embedding RMS) at the input, optionally pushed through the real decoder
+layers, at the same 0.60× budget:
+
+| calibration (zero data) | what H captures | PPL |
+|---|---|---|
+| random tokens (real embeddings, merge-rank prior) | real activation manifold | **4,045** |
+| analytic MC (Gaussian matched to real moments) | real 2nd-order covariance | 65,041 |
+| noise + propagate (noise through real layers) | only the weights' own structure | 294,083 |
+| plain SVD (`H = I`, no whitening) | nothing | 82,352,435 |
+| isotropic noise (no propagation) | confidently wrong directions | 282,283,897 |
+
+Two takeaways: (1) noise loses to real tokens by ~70×, because random tokens
+sample *actual embedding vectors* and land on the real activation manifold
+(heavy tails, massive-activation directions) that noise cannot fake; (2)
+**unstructured noise is worse than no whitening at all** (282M vs 82M) —
+whitening rotates the truncation toward the directions `H` claims matter, so a
+*wrong* `H` actively preserves the wrong directions and discards the right ones.
+An honest identity beats a confident lie. This is the opposite of the
+quantization folklore where random calibration data often suffices [11] —
+quantization only needs activation *ranges*, whitening needs *directions*. So
+the merge-rank prior's value is specifically the "real embedding vectors" part;
+noise is not a substitute.
 
 ### Results (global budget 0.6×, wikitext PPL)
 
