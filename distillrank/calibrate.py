@@ -67,6 +67,56 @@ def attach_cov_hooks(model) -> tuple[dict, list]:
     return H, handles
 
 
+def collect_influence(model_dir: str, texts: list[str], tokenizer, *,
+                      seqlen: int = 512, max_seqs: int = 32, device: str = "auto") -> tuple[dict, dict]:
+    """Return ({gguf_name: H [in,in]}, {gguf_name: G [out,out]}) for two-sided
+    (Fisher-weighted) whitening: H = Σ xxᵀ over inputs (activation statistics),
+    G = Σ ggᵀ over output gradients g = ∂loss/∂y (output loss-sensitivity).
+
+    Truncating the SVD of L·W·S (H=SSᵀ, G=LLᵀ) minimizes the 2nd-order loss
+    impact tr((W−W_r)ᵀ G (W−W_r) H) rather than plain activation error — the
+    input-output / Fisher-weighted objective (cf. IO-SVD arXiv:2605.15626,
+    GFWSVD arXiv:2505.17974). Uses the LM loss as the differentiated signal.
+    """
+    from transformers import AutoModelForCausalLM
+
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = AutoModelForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float32)
+    model.to(device).eval()
+
+    H, fwd = attach_cov_hooks(model)
+    G: dict[str, torch.Tensor] = {}
+    bwd = []
+
+    def make_bhook(gname):
+        def hook(_mod, grad_in, grad_out):
+            g = grad_out[0].detach().reshape(-1, grad_out[0].shape[-1]).to(torch.float32)
+            gtg = g.t() @ g
+            G[gname] = gtg if gname not in G else G[gname] + gtg
+        return hook
+
+    for name, mod in model.named_modules():
+        if isinstance(mod, torch.nn.Linear):
+            gname = gguf_name(name)
+            if gname is not None:
+                bwd.append(mod.register_full_backward_hook(make_bhook(gname)))
+
+    ids = tokenizer("\n\n".join(texts), return_tensors="pt").input_ids[0]
+    n = min(max_seqs, ids.shape[0] // seqlen)
+    for i in range(n):
+        chunk = ids[i * seqlen:(i + 1) * seqlen].unsqueeze(0).to(device)
+        model.zero_grad(set_to_none=True)
+        out = model(chunk, labels=chunk)
+        out.loss.backward()
+
+    for h in fwd + bwd:
+        h.remove()
+    Hn = {g: v.cpu().numpy().astype(np.float32) for g, v in H.items()}
+    Gn = {g: v.cpu().numpy().astype(np.float32) for g, v in G.items()}
+    return Hn, Gn
+
+
 def collect_covariance(model_dir: str, texts: list[str], tokenizer, *,
                        seqlen: int = 512, max_seqs: int = 128, device: str = "auto",
                        token_ids: "torch.Tensor | None" = None) -> dict:

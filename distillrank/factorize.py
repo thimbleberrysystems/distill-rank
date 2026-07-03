@@ -108,6 +108,37 @@ def whiten_svd(W: np.ndarray, H: np.ndarray, policy: "RankPolicy",
             np.ascontiguousarray(svd_vt.to(torch.float32).numpy()), err)
 
 
+def two_sided_whiten_svd(W: np.ndarray, H: np.ndarray, G: np.ndarray, policy: "RankPolicy",
+                         damp: float = 1e-3) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Input-output (Fisher-weighted) truncation, cf. IO-SVD / GFWSVD.
+
+    H = Σ xxᵀ (input activations), G = Σ ggᵀ (output loss-gradients). Factor
+    the doubly-whitened matrix L·W·S (H=SSᵀ, G=LLᵀ), keep rank r, then un-whiten
+    both sides. Minimizes the 2nd-order loss impact tr((W−W_r)ᵀG(W−W_r)H) instead
+    of plain activation error ‖(W−W_r)X‖. Returns runtime factors (U,s,Vt).
+    """
+    Wt = torch.tensor(np.ascontiguousarray(W), dtype=torch.float64)
+    Ht = torch.tensor(np.ascontiguousarray(H), dtype=torch.float64)
+    Gt = torch.tensor(np.ascontiguousarray(G), dtype=torch.float64)
+    n_in, n_out = Ht.shape[0], Gt.shape[0]
+    epsH = damp * torch.diagonal(Ht).mean().clamp(min=1e-8)
+    epsG = damp * torch.diagonal(Gt).mean().clamp(min=1e-8)
+    S = torch.linalg.cholesky(Ht + epsH * torch.eye(n_in, dtype=torch.float64))    # H = S Sᵀ
+    L = torch.linalg.cholesky(Gt + epsG * torch.eye(n_out, dtype=torch.float64))   # G = L Lᵀ
+    U, sig, Vt = torch.linalg.svd(L @ Wt @ S, full_matrices=False)                 # doubly whitened
+    r = policy.choose(sig.numpy().astype(np.float32), W.shape[0], W.shape[1])
+    U, sig, Vt = U[:, :r], sig[:r], Vt[:r, :]
+    # un-whiten: svd_u = L^{-ᵀ}... W_r = L^{-1}(U diag(sig)) (Vt S^{-1}); fold sig into U side
+    svd_u = torch.linalg.solve_triangular(L, U * sig, upper=False)                 # L svd_u = U·sig
+    svd_vt = torch.linalg.solve_triangular(
+        S.transpose(-1, -2), Vt.transpose(-1, -2), upper=True).transpose(-1, -2)   # Vt S^{-1}
+    ones = torch.ones(r, dtype=torch.float64)
+    err = float(((svd_u) @ svd_vt - Wt).abs().max())
+    return (np.ascontiguousarray(svd_u.to(torch.float32).numpy()),
+            np.ascontiguousarray(ones.to(torch.float32).numpy()),
+            np.ascontiguousarray(svd_vt.to(torch.float32).numpy()), err)
+
+
 def svd_truncate(W: np.ndarray, r: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Return (U[out,r], s[r], Vt[r,in], max_abs_reconstruction_error)."""
     W = np.ascontiguousarray(W, dtype=np.float32)
