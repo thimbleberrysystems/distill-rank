@@ -171,7 +171,7 @@ Results (SmolLM2-135M, global budget 0.6× params, wikitext PPL, base 22.4):
 | data, 2 seqs | 512 | 2,378 |
 | data, 24 seqs (Phase-2 reference) | 12,288 | 3,632 |
 | **hybrid: analytic + 2 seqs, λ=0.5** | **512** | **434** |
-| **hybrid + 200-step KD finetune** | 512 + KD | **135.6** |
+| **hybrid + 200-step KD finetune** | 512 + KD | **129** |
 
 Replicated on a second architecture — Qwen2.5-0.5B, budget 0.6×, base PPL 19.0:
 
@@ -237,7 +237,7 @@ here — they were scraping a confidence-interval bound instead of the score.
 | data 2-seq | 512 | 370.8 | 2,378 | 29.2 | 51.2 | 1,119 | 61.9 |
 | data 24-seq | 12k | 374.0 | 3,632 | 25.5 | 49.0 | 1,084 | 61.8 |
 | hybrid | 512 | 366.3 | 434 | 25.8 | **52.5** | 1,162 | 64.7 |
-| **hybrid + KD** | 512+KD | 366.3 | **136** | 28.0 | 53.0 | 1,184 | 64.5 |
+| **hybrid + KD** (aligned ranks) | 512+KD | 370.6 | **129** | 28.5 | 51.8 | **1,852** | 65.3 |
 
 **Qwen2.5-0.5B** (f32):
 
@@ -256,13 +256,38 @@ Reading the tradeoff honestly:
 - **Quality**: KD recovery is decisive — hybrid+KD is the only compressed model
   that stays within ~6× of base PPL and recovers HellaSwag toward base. Whitening
   choice spans five orders of magnitude of PPL at *identical size*.
-- **Speed is not free from factoring on CPU.** Prefill (compute-bound) gets
-  *slower* — the factored path runs two GEMMs (`U` then `Vᵀ`) where the dense
-  path runs one, and at these sizes that overhead outweighs the FLOP cut. Decode
-  (memory-bound) improves on the larger Qwen (25.7→30.9 tok/s, +20%) where the
-  param cut dominates, but is roughly neutral on tiny SmolLM2. Net: the win here
-  is **memory footprint**, not throughput — quantizing the factors (future work)
-  is what would turn the size cut into a speed cut.
+- **Speed: the original tables above understate the factored models** — they
+  were measured before the rank-alignment fix below. Post-fix, factoring is a
+  speed *win* at prefill too.
+
+### The rank-alignment performance bug (and fix)
+
+The first benchmark showed factored prefill *slower* than dense (1,148 vs
+1,552 tok/s @24t) despite 0.59× the FLOPs — while the same shapes in a torch
+microbenchmark ran *faster* factored. Root cause: ggml's fast f32 GEMM
+(`llamafile_sgemm`) **bails out whenever the inner dimension `k % 8 != 0`**
+(`sgemm.cpp: if (k % 8) return false;`). In the factored path the second
+matmul's inner dimension *is the kept rank*, and energy-threshold ranks are
+arbitrary integers (51, 111, 205…) — so nearly every U-side matmul silently
+fell onto the slow generic path. The dense baseline never trips this (k = 576
+or 1536).
+
+Fix: `RankPolicy.align = 8` — kept ranks round **up** to a multiple of 8
+(planner budget search matches). Costs <2% params, keeps strictly more
+spectrum, and restores the fast path. Same stats, same 0.60× budget,
+SmolLM2-135M:
+
+| model | prefill t/s @1t | prefill t/s @24t | decode t/s @1t | PPL |
+|---|---|---|---|---|
+| base (dense f32) | 185 | 1,552 | 16.1 | 22.4 |
+| hybrid, unaligned ranks | 102 | 1,148 | 23.1 | 434 |
+| **hybrid, aligned ranks** | **263** | **1,614** | **23.5** | **427** |
+
+Aligned-factored is now faster than dense at *both* prefill (+42% @1t) and
+decode (+46% @1t), tracking the 0.59× FLOP/byte ratio. At 24 threads on this
+135M model the decode advantage is masked by per-op threading overhead (two
+thread barriers per linear instead of one); it should re-emerge on bigger
+models or fewer threads, as it already does on Qwen decode (+20%).
 
 ```bash
 scripts/get_eval_data.sh                       # wikitext + hellaswag + winogrande

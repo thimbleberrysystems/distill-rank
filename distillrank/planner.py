@@ -50,6 +50,7 @@ def _params_at(spectra, orig, tau: float) -> float:
         energy = np.cumsum(s.astype(np.float64) ** 2)
         r = int(np.searchsorted(energy / energy[-1], tau) + 1)
         r = max(1, min(r, min(out, in_)))
+        r = min(-(-r // 8) * 8, min(out, in_))     # match RankPolicy.align=8
         total += (out * r + r + r * in_) if saves_params(r, out, in_) else out * in_
     return total / max(orig, 1)
 

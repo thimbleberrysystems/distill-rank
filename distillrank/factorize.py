@@ -34,24 +34,36 @@ class RankPolicy:
       fixed  -> r = value                             (clamped to min(out,in))
       frac   -> r = round(value * min(out,in))
       energy -> smallest r with sum(top-r s^2)/sum(s^2) >= value
+
+    align: kept ranks are rounded UP to this multiple (then clamped to full).
+      ggml's fast f32 GEMM (llamafile sgemm) bails out when the inner dimension
+      k % 8 != 0 — and in the factored path the second matmul's inner dim IS the
+      rank — so an unaligned rank silently drops every U-side matmul onto the
+      slow generic path. Rounding up costs <2% params and keeps strictly more
+      spectrum, so it can only help quality.
     """
     kind: str = "full"
     value: float = 1.0
+    align: int = 8
 
     def choose(self, s: np.ndarray, out: int, in_: int) -> int:
         k = min(out, in_)
         if self.kind == "full":
             return k
         if self.kind == "fixed":
-            return max(1, min(int(self.value), k))
-        if self.kind == "frac":
-            return max(1, min(int(round(self.value * k)), k))
-        if self.kind == "energy":
+            r = max(1, min(int(self.value), k))
+        elif self.kind == "frac":
+            r = max(1, min(int(round(self.value * k)), k))
+        elif self.kind == "energy":
             energy = np.cumsum(s.astype(np.float64) ** 2)
             total = energy[-1] if energy[-1] > 0 else 1.0
             r = int(np.searchsorted(energy / total, self.value) + 1)
-            return max(1, min(r, k))
-        raise ValueError(f"unknown rank policy: {self.kind}")
+            r = max(1, min(r, k))
+        else:
+            raise ValueError(f"unknown rank policy: {self.kind}")
+        if self.align > 1:
+            r = min(-(-r // self.align) * self.align, k)
+        return r
 
 
 def saves_params(r: int, out: int, in_: int) -> bool:
