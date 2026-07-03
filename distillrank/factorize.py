@@ -29,11 +29,19 @@ except ImportError:  # pragma: no cover
 class RankPolicy:
     """How to pick the kept rank r for a matrix.
 
-    kind: 'full' | 'fixed' | 'frac' | 'energy'
+    kind: 'full' | 'fixed' | 'frac' | 'energy' | 'error'
       full   -> r = min(out,in)                       (loss-less)
       fixed  -> r = value                             (clamped to min(out,in))
       frac   -> r = round(value * min(out,in))
       energy -> smallest r with sum(top-r s^2)/sum(s^2) >= value
+      error  -> quality-driven dynamic rank: smallest r whose *relative error in
+                the metric of s* is <= value (=ε). On the activation-aware path s
+                is the whitened spectrum svdvals(W·S), and
+                sum_{i>r} s_i^2 / sum s_i^2 == ‖(W−W_r)X‖²/‖WX‖², so ε is the
+                per-matrix activation error. Identical mechanics to `energy` with
+                threshold (1−ε), but parameterized by a *quality* knob rather than
+                an energy fraction — each matrix keeps whatever rank meets ε, so
+                the model size emerges instead of being imposed.
 
     align: kept ranks are rounded UP to this multiple (then clamped to full).
       ggml's fast f32 GEMM (llamafile sgemm) bails out when the inner dimension
@@ -54,10 +62,11 @@ class RankPolicy:
             r = max(1, min(int(self.value), k))
         elif self.kind == "frac":
             r = max(1, min(int(round(self.value * k)), k))
-        elif self.kind == "energy":
+        elif self.kind in ("energy", "error"):
+            thresh = self.value if self.kind == "energy" else 1.0 - self.value
             energy = np.cumsum(s.astype(np.float64) ** 2)
             total = energy[-1] if energy[-1] > 0 else 1.0
-            r = int(np.searchsorted(energy / total, self.value) + 1)
+            r = int(np.searchsorted(energy / total, thresh) + 1)
             r = max(1, min(r, k))
         else:
             raise ValueError(f"unknown rank policy: {self.kind}")

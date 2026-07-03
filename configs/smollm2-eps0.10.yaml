@@ -1,0 +1,23 @@
+# Dynamic ε-rank: per-matrix rank at fixed activation-error ε=0.10 (quality knob,
+# not a size target). Size emerges. See plan Phase A.
+name: smollm2-eps0.10
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: error
+  value: 0.10
+calibration:
+  source: hybrid
+  lambda: 0.5
+  mode: mc
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  text: data/eval/wiki.test.raw
+  seqs: 2
+  device: cpu
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
