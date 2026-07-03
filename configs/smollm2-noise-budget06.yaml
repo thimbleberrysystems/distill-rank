@@ -1,0 +1,19 @@
+# Control experiment: isotropic random noise as calibration (zero data).
+# Whitening needs covariance *directions*, which noise lacks — this scores
+# WORSE than plain SVD. See README "What about pure random noise?".
+#   python -m distillrank run configs/smollm2-noise-budget06.yaml
+name: smollm2-noise-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: noise
+  samples: 16384
+  seqlen: 256
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256

@@ -123,8 +123,8 @@ def analytic_covariance(model_dir: str, *, prior: str = "merge_rank",
         ids = torch.tensor(rng.choice(V, size=(n_seqs, seqlen), p=p), dtype=torch.long)
         return collect_covariance(model_dir, [], None, device=device, token_ids=ids)
 
-    if mode != "mc":
-        raise ValueError(f"unknown mode: {mode} (mc | random_tokens)")
+    if mode not in ("mc", "noise"):
+        raise ValueError(f"unknown mode: {mode} (mc | noise | random_tokens)")
 
     H, handles = attach_cov_hooks(model)
     pos_ids = torch.arange(seqlen, device=device).unsqueeze(0)
@@ -132,7 +132,14 @@ def analytic_covariance(model_dir: str, *, prior: str = "merge_rank",
                         diagonal=1)[None, None]
 
     E = model.model.embed_tokens.weight.detach().cpu().numpy()
-    mu, M = embedding_moments(E, p)
+    if mode == "noise":
+        # isotropic Gaussian noise at the embedding RMS, propagated through the
+        # real layers. Control experiment: whitening needs covariance directions,
+        # which noise lacks — this scores WORSE than plain SVD (see README).
+        d = E.shape[1]
+        mu, M = np.zeros(d), float(E.std()) ** 2 * np.eye(d)
+    else:
+        mu, M = embedding_moments(E, p)
     with torch.no_grad():
         for layer in model.model.layers:
             X = _gauss_batch(mu, M, n_seqs, seqlen, rng, rho).to(device)
@@ -152,12 +159,14 @@ def analytic_covariance(model_dir: str, *, prior: str = "merge_rank",
     for h in handles:
         h.remove()
     stats = {g: v.cpu().numpy().astype(np.float32) for g, v in H.items()}
-    # blk.0 attn input is exact under the prior — no reason to keep the MC estimate
-    exact0 = layer0_exact_h(model, p)
-    for k in ("attn_q", "attn_k", "attn_v"):
-        key = f"blk.0.{k}"
-        if key in stats:
-            stats[key] = exact0
+    if mode == "mc":
+        # blk.0 attn input is exact under the prior — no reason to keep the MC
+        # estimate. (Skipped for noise: it has no prior / embedding manifold.)
+        exact0 = layer0_exact_h(model, p)
+        for k in ("attn_q", "attn_k", "attn_v"):
+            key = f"blk.0.{k}"
+            if key in stats:
+                stats[key] = exact0
     return stats
 
 

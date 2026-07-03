@@ -175,7 +175,7 @@ def main(argv=None):
     ca.add_argument("model_dir"); ca.add_argument("out")
     ca.add_argument("--prior", default="merge_rank", choices=["uniform", "zipf", "merge_rank"])
     ca.add_argument("--zipf-s", type=float, default=1.0)
-    ca.add_argument("--mode", default="mc", choices=["mc", "random_tokens"])
+    ca.add_argument("--mode", default="mc", choices=["mc", "noise", "random_tokens"])
     ca.add_argument("--samples", type=int, default=16384); ca.add_argument("--seqlen", type=int, default=256)
     ca.add_argument("--rho", type=float, default=0.0, help="AR(1) token correlation of MC samples")
     ca.add_argument("--seed", type=int, default=0); ca.add_argument("--device", default="cpu")

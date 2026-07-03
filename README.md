@@ -311,11 +311,11 @@ layers, at the same 0.60× budget:
 |---|---|---|
 | random tokens (real embeddings, merge-rank prior) | real activation manifold | **4,045** |
 | analytic MC (Gaussian matched to real moments) | real 2nd-order covariance | 65,041 |
-| noise + propagate (noise through real layers) | only the weights' own structure | 294,083 |
+| noise + propagate (`source: noise`, noise through real layers) | only the weights' own structure | 382,096 |
 | plain SVD (`H = I`, no whitening) | nothing | 82,352,435 |
 | isotropic noise (no propagation) | confidently wrong directions | 282,283,897 |
 
-Two takeaways: (1) noise loses to real tokens by ~70×, because random tokens
+Two takeaways: (1) noise loses to real tokens by ~90×, because random tokens
 sample *actual embedding vectors* and land on the real activation manifold
 (heavy tails, massive-activation directions) that noise cannot fake; (2)
 **unstructured noise is worse than no whitening at all** (282M vs 82M) —

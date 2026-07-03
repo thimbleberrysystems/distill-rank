@@ -39,7 +39,8 @@ def _calibrate_data(model_dir: str, cal: dict) -> dict:
 
 def _calibrate(model_dir: str, cal: dict) -> dict:
     """Dispatch on calibration.source: data (default, unchanged) | analytic |
-    random_tokens | hybrid (analytic blended with a small data calibration)."""
+    random_tokens | noise | hybrid (analytic blended with a small data
+    calibration)."""
     source = cal.get("source", "data")
     if source == "data":
         return _calibrate_data(model_dir, cal)
@@ -48,9 +49,9 @@ def _calibrate(model_dir: str, cal: dict) -> dict:
               samples=cal.get("samples", 16384), seqlen=cal.get("seqlen", 256),
               rho=cal.get("rho", 0.0), seed=cal.get("seed", 0),
               device=cal.get("device", "cpu"))
-    if source in ("analytic", "random_tokens"):
-        return analytic_covariance(model_dir, mode=cal.get("mode", "mc")
-                                   if source == "analytic" else "random_tokens", **kw)
+    if source in ("analytic", "random_tokens", "noise"):
+        mode = cal.get("mode", "mc") if source == "analytic" else source
+        return analytic_covariance(model_dir, mode=mode, **kw)
     if source == "hybrid":
         h_a = analytic_covariance(model_dir, mode=cal.get("mode", "mc"), **kw)
         h_d = _calibrate_data(model_dir, cal)
