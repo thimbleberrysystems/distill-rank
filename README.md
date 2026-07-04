@@ -504,17 +504,20 @@ prefill/decode via `llama-bench` (pp/tg 128), 24-thread CPU.
 | data 24-seq | 12k | 369.1 | 9,002 | 26.5 | 49.0 | 1,662 | 63.6 |
 | hybrid | 512 | 370.6 | 427 | 27.0 | 51.5 | 1,707 | 65.7 |
 | **hybrid + KD** | 512+KD | 370.6 | **129** | 28.5 | 51.8 | 1,752 | **70.4** |
-| input-only (data 8-seq) | 4k | 369.6 | 3,672 | 25.2 | 46.8 | 1,664 | 59.9 |
-| **data IO-SVD (2-sided)** | 4k | 369.6 | **1,356** | 23.5 | 50.2 | 1,708 | 60.7 |
-| **zero-data IO-SVD** | 0 | 373.8 | **1,888** | 25.2 | 47.0 | 1,702 | 64.2 |
+| input-only (data 8-seq) | 4k | 369.6 | 3,672 | 25.2 | 46.8 | 1,634 | 61.2 |
+| **data IO-SVD (2-sided)** | 4k | 369.6 | **1,356** | 23.5 | 50.2 | 1,624 | 61.9 |
+| **zero-data IO-SVD** | 0 | 373.8 | **1,888** | 25.2 | 47.0 | 1,684 | 64.3 |
+| **hybrid + prior-Fisher** | 512 | 370.6 | **419** | 27.0 | **54.2** | 1,649 | 64.1 |
 
-The last three rows are the Phase-4 two-sided arms (compare `input-only 8-seq` ↔
+The last four rows are the Phase-4 two-sided arms (compare `input-only 8-seq` ↔
 `data IO-SVD` for the data effect, `random-token prior` ↔ `zero-data IO-SVD` for
 the zero-data effect). Two-sided roughly halves PPL vs its input-only pair at
-equal size and speed. Note that at this 0.6× budget HellaSwag/Winogrande hover
-near chance for *every* compressed variant (base 41/55 → ~24-28 / ~47-52), so at
-this operating point PPL is the discriminating metric; accuracy separates only
-with KD recovery (or a gentler budget).
+equal size and speed, and **hybrid + prior-Fisher (419) edges past hybrid (427)
+with the best compressed-model Winogrande (54.2, vs base 55.2)** — the only place
+task accuracy visibly separates without KD. Otherwise, at this 0.6× budget
+HellaSwag/Winogrande hover near chance for compressed variants (base 41/55 →
+~24-28 / ~47-54), so PPL is the discriminating metric here; accuracy separates
+cleanly only with KD recovery (or a gentler budget).
 
 **Qwen2.5-0.5B** (f32, 1,982 MB → ~1,410 MB):
 
