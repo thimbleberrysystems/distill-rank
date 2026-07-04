@@ -36,24 +36,28 @@ prefill and decode.
 All variants below exported with aligned ranks at global budget 0.6× via one
 harness (`scripts/benchmark.py`, sequential runs). PPL on wikitext (ctx 256);
 HellaSwag/Winogrande over 400 tasks; prefill/decode via `llama-bench` (pp/tg
-128), 24-thread CPU.
+128), 24-thread CPU. **GFLOPs/tok** is the exact per-token matmul cost, read off
+the GGUF tensor shapes (block projections + the tied LM head, dense or
+`U·s·Vᵀ`); the context-dependent attention-score term is excluded because it is
+identical across variants. It measures the *compute* cut, next to `size MB`'s
+*memory* cut.
 
 **SmolLM2-135M** (f32, 540 MB → ~370 MB):
 
-| variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
-|---|---|---|---|---|---|---|---|
-| **base (uncompressed)** | — | 539.8 | **22.4** | **41.2** | **55.2** | 1,652 | 67.7 |
-| plain SVD | 0 | 370.7 | 82,352,435 | 25.8 | 48.5 | 1,722 | 58.9 |
-| analytic MC | 0 | 369.8 | 65,041 | 26.2 | 47.5 | 1,743 | 64.0 |
-| random-token prior | 0 | 373.8 | 4,045 | 24.0 | 47.8 | **1,784** | 65.8 |
-| data 2-seq | 512 | 369.0 | 2,554 | 27.8 | 49.0 | 1,714 | 61.7 |
-| data 24-seq | 12k | 369.1 | 9,002 | 26.5 | 49.0 | 1,662 | 63.6 |
-| hybrid | 512 | 370.6 | 427 | 27.0 | 51.5 | 1,707 | 65.7 |
-| **hybrid + KD** | 512+KD | 370.6 | **129** | 28.5 | 51.8 | 1,752 | **70.4** |
-| input-only (data 8-seq) | 4k | 369.6 | 3,672 | 25.2 | 46.8 | 1,634 | 61.2 |
-| **data IO-SVD (2-sided)** | 4k | 369.6 | **1,356** | 23.5 | 50.2 | 1,624 | 61.9 |
-| **zero-data IO-SVD** | 0 | 373.8 | **1,888** | 25.2 | 47.0 | 1,684 | 64.3 |
-| **hybrid + prior-Fisher** | 512 | 370.6 | **419** | 27.0 | **54.2** | 1,649 | 64.1 |
+| variant | calib | size MB | GFLOPs/tok↓ | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
+|---|---|---|---|---|---|---|---|---|
+| **base (uncompressed)** | — | 539.8 | **0.269** | **22.4** | **41.2** | **55.2** | 1,652 | 67.7 |
+| plain SVD | 0 | 370.7 | 0.184 | 82,352,435 | 25.8 | 48.5 | 1,722 | 58.9 |
+| analytic MC | 0 | 369.8 | 0.184 | 65,041 | 26.2 | 47.5 | 1,743 | 64.0 |
+| random-token prior | 0 | 373.8 | 0.186 | 4,045 | 24.0 | 47.8 | **1,784** | 65.8 |
+| data 2-seq | 512 | 369.0 | 0.183 | 2,554 | 27.8 | 49.0 | 1,714 | 61.7 |
+| data 24-seq | 12k | 369.1 | 0.184 | 9,002 | 26.5 | 49.0 | 1,662 | 63.6 |
+| hybrid | 512 | 370.6 | 0.184 | 427 | 27.0 | 51.5 | 1,707 | 65.7 |
+| **hybrid + KD** | 512+KD | 370.6 | 0.184 | **129** | 28.5 | 51.8 | 1,752 | **70.4** |
+| input-only (data 8-seq) | 4k | 369.6 | 0.184 | 3,672 | 25.2 | 46.8 | 1,634 | 61.2 |
+| **data IO-SVD (2-sided)** | 4k | 369.6 | 0.184 | **1,356** | 23.5 | 50.2 | 1,624 | 61.9 |
+| **zero-data IO-SVD** | 0 | 373.8 | 0.186 | **1,888** | 25.2 | 47.0 | 1,684 | 64.3 |
+| **hybrid + prior-Fisher** | 512 | 370.6 | 0.184 | **419** | 27.0 | **54.2** | 1,649 | 64.1 |
 
 The last four rows are the two-sided arms (compare `input-only 8-seq` ↔
 `data IO-SVD` for the data effect, `random-token prior` ↔ `zero-data IO-SVD` for
@@ -69,14 +73,14 @@ variance, exactly what the hybrid's shrinkage prior repairs.)
 
 **Qwen2.5-0.5B** (f32, 1,982 MB → ~1,410 MB):
 
-| variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
-|---|---|---|---|---|---|---|---|
-| **base (uncompressed)** | — | 1,982 | **19.0** | **51.0** | **57.0** | 669 | 25.3 |
-| random-token prior | 0 | 1,409 | 741 | 26.8 | 50.0 | 867 | 31.0 |
-| **zero-data IO-SVD** | 0 | 1,409 | **651** | 27.5 | 53.5 | 916 | 31.9 |
-| data 2-seq | 512 | 1,418 | 836 | 27.2 | **56.0** | 887 | 30.9 |
-| **data IO-SVD (2-sided)** | 4k | 1,421 | **530** | 25.0 | 51.5 | 885 | 31.6 |
-| **hybrid** | 512 | 1,405 | **213** | 26.5 | 49.5 | 908 | 31.8 |
+| variant | calib | size MB | GFLOPs/tok↓ | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
+|---|---|---|---|---|---|---|---|---|
+| **base (uncompressed)** | — | 1,982 | **0.988** | **19.0** | **51.0** | **57.0** | 669 | 25.3 |
+| random-token prior | 0 | 1,409 | 0.701 | 741 | 26.8 | 50.0 | 867 | 31.0 |
+| **zero-data IO-SVD** | 0 | 1,409 | 0.701 | **651** | 27.5 | 53.5 | 916 | 31.9 |
+| data 2-seq | 512 | 1,418 | 0.706 | 836 | 27.2 | **56.0** | 887 | 30.9 |
+| **data IO-SVD (2-sided)** | 4k | 1,421 | 0.707 | **530** | 25.0 | 51.5 | 885 | 31.6 |
+| **hybrid** | 512 | 1,405 | 0.699 | **213** | 26.5 | 49.5 | 908 | 31.8 |
 
 On Qwen the two-sided arms again beat their input-only pairs: zero-data IO-SVD
 651 < random-token 741 (and higher HellaSwag/Winogrande), data IO-SVD 530 <
@@ -85,9 +89,12 @@ arm is the obvious next run.
 
 **Reading the tradeoff:**
 
-- **Size**: a clean ~28–32% cut at budget 0.6×, identical across calibration
-  methods — the rank plan sets the size; calibration sets the *quality* at that
-  size.
+- **Size & compute**: a clean ~28–32% cut in *both* file size and per-token
+  matmul FLOPs at budget 0.6×, identical across calibration methods — the rank
+  plan sets size and compute together; calibration sets the *quality* at that
+  point. Both land above the 0.60× budget (0.68× SmolLM2, 0.71× Qwen) for the
+  same reason: the tied LM head is left unfactorized, a shared fixed floor in
+  bytes and in FLOPs.
 - **Speed** (post-alignment): the zero-data and hybrid arms beat dense at prefill
   (+4–8% on SmolLM2, **+30–37% on Qwen**), and *every* factored arm beats dense at
   decode on Qwen (+22–26%). On SmolLM2 the two-sided arms sit within ~2% of dense

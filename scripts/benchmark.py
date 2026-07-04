@@ -61,6 +61,29 @@ def _ratio(gguf: str) -> float | None:
     return None
 
 
+def _gflops_per_tok(gguf: str) -> float | None:
+    """Exact per-token matmul FLOPs (2*MACs), read off the GGUF tensor shapes:
+    every block linear (dense `.weight` or factored `U`+`Vᵀ`) plus the tied LM
+    head (token_embd used as output). Excludes the context-dependent
+    attention-score term and elementwise ops (norms, softmax, s-scaling), which
+    are identical across variants."""
+    try:
+        import gguf as _g
+        f = 0
+        for t in _g.GGUFReader(gguf).tensors:
+            n, s = t.name, [int(x) for x in t.shape]
+            if n.endswith(("svd_u", "svd_vt")):
+                f += 2 * s[0] * s[1]
+            elif n == "token_embd.weight":                      # tied lm_head matmul
+                f += 2 * s[0] * s[1]
+            elif n.endswith(".weight") and len(s) == 2 and ("attn_" in n or "ffn_" in n):
+                f += 2 * s[0] * s[1]
+        return round(f / 1e9, 3)
+    except Exception as e:
+        print(f"    ! gflops failed: {e}", file=sys.stderr)
+        return None
+
+
 def _try(fn, *a, **k):
     try:
         return fn(*a, **k)
@@ -76,6 +99,7 @@ def bench(label: str, gguf: str, note: str) -> dict:
     print(f"[bench] {label}  ({gguf})", file=sys.stderr)
     row = {"variant": label, "calib": note,
            "size_mb": round(evaltools.size_bytes(gguf) / 1e6, 1),
+           "gflops_tok": _gflops_per_tok(gguf),
            "param_ratio": _ratio(gguf)}
     row["ppl"] = _try(evaltools.perplexity, gguf, PPL_FILE, CTX)
     if Path(HS_FILE).exists():
@@ -101,7 +125,7 @@ def main():
     rows = [bench(*m) for m in MANIFEST[fam]]
     rows = [r for r in rows if not r.get("missing")]
 
-    cols = ["variant", "calib", "size_mb", "param_ratio", "ppl",
+    cols = ["variant", "calib", "size_mb", "gflops_tok", "param_ratio", "ppl",
             "hellaswag_%", "winogrande_%", "pp_tps", "tg_tps"]
     cols = [c for c in cols if any(c in r for r in rows)]
     out = Path(f"runs/benchmark-{fam}.csv")
@@ -111,7 +135,8 @@ def main():
         w.writerows(rows)
 
     hdr = {"variant": "variant", "calib": "calib data", "size_mb": "size MB",
-           "param_ratio": "params", "ppl": "PPL↓", "hellaswag_%": "HellaSwag↑",
+           "gflops_tok": "GFLOPs/tok↓", "param_ratio": "params",
+           "ppl": "PPL↓", "hellaswag_%": "HellaSwag↑",
            "winogrande_%": "Winogrande↑", "pp_tps": "prefill tok/s↑",
            "tg_tps": "decode tok/s↑"}
     print("\n| " + " | ".join(hdr[c] for c in cols) + " |")
