@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .calibrate import attach_cov_hooks
+from .calibrate import attach_cov_hooks, gguf_name
 
 
 # --- token priors -------------------------------------------------------------
@@ -168,6 +168,59 @@ def analytic_covariance(model_dir: str, *, prior: str = "merge_rank",
             if key in stats:
                 stats[key] = exact0
     return stats
+
+
+# --- zero-data two-sided (Fisher) calibration -----------------------------------
+
+def collect_influence_prior(model_dir: str, *, prior: str = "merge_rank",
+                            zipf_s: float = 1.0, samples: int = 8192, seqlen: int = 256,
+                            seed: int = 0, device: str = "cpu") -> tuple[dict, dict]:
+    """Zero-data two-sided calibration: sample token ids from the merge-rank
+    prior, run forward+backward under the LM loss, and collect BOTH the input
+    covariance H = Σ xxᵀ and the output-gradient covariance G = Σ ggᵀ.
+
+    This is the data-free analog of calibrate.collect_influence — the output-side
+    Fisher signal for IO-SVD-style two-sided whitening, obtained with no
+    calibration text (novel combination of IO-SVD with the Phase-3 zero-data
+    prior). Returns ({gguf_name: H}, {gguf_name: G}).
+    """
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(model_dir, torch_dtype=torch.float32)
+    model.to(device).eval()
+    V = model.model.embed_tokens.weight.shape[0]
+    p = token_prior(prior, model_dir, V, zipf_s=zipf_s)
+    rng = np.random.default_rng(seed)
+    n = max(1, samples // seqlen)
+    ids = torch.tensor(rng.choice(V, size=(n, seqlen), p=p), dtype=torch.long)
+
+    H, fwd = attach_cov_hooks(model)
+    G: dict = {}
+    bwd = []
+
+    def make_bhook(gname):
+        def hook(_mod, _gi, grad_out):
+            g = grad_out[0].detach().reshape(-1, grad_out[0].shape[-1]).to(torch.float32)
+            gtg = g.t() @ g
+            G[gname] = gtg if gname not in G else G[gname] + gtg
+        return hook
+
+    for name, mod in model.named_modules():
+        if isinstance(mod, torch.nn.Linear):
+            gn = gguf_name(name)
+            if gn is not None and gn != "output":   # lm_head G is [vocab,vocab]: skip
+                bwd.append(mod.register_full_backward_hook(make_bhook(gn)))
+
+    for i in range(n):
+        chunk = ids[i:i + 1].to(device)
+        model.zero_grad(set_to_none=True)
+        model(chunk, labels=chunk).loss.backward()
+
+    for h in fwd + bwd:
+        h.remove()
+    Hn = {g: v.cpu().numpy().astype(np.float32) for g, v in H.items()}
+    Gn = {g: v.cpu().numpy().astype(np.float32) for g, v in G.items()}
+    return Hn, Gn
 
 
 # --- hybrid mixing --------------------------------------------------------------

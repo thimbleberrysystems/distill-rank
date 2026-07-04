@@ -99,7 +99,7 @@ def collect_influence(model_dir: str, texts: list[str], tokenizer, *,
     for name, mod in model.named_modules():
         if isinstance(mod, torch.nn.Linear):
             gname = gguf_name(name)
-            if gname is not None:
+            if gname is not None and gname != "output":   # lm_head G is [vocab,vocab]: skip
                 bwd.append(mod.register_full_backward_hook(make_bhook(gname)))
 
     ids = tokenizer("\n\n".join(texts), return_tensors="pt").input_ids[0]

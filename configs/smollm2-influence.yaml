@@ -1,0 +1,21 @@
+# #1 Data IO-SVD: two-sided (Fisher-weighted) whitening, input H + output G from
+# real calibration text. Known method (IO-SVD arXiv:2605.15626 / GFWSVD 2505.17974).
+#   python -m distillrank run configs/smollm2-influence.yaml
+name: smollm2-influence-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: influence_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: data
+  text: data/eval/wiki.test.raw
+  seqs: 8
+  seqlen: 512
+  device: cpu
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true

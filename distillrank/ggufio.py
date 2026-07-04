@@ -55,3 +55,33 @@ def open_reader(path: str) -> tuple[gguf.GGUFReader, str]:
     reader = gguf.GGUFReader(path)
     arch = reader.fields["general.architecture"].contents()
     return reader, arch
+
+
+def head_meta(reader, arch: str) -> tuple[int | None, int | None]:
+    """(n_head, n_head_kv) from GGUF attention metadata, or (None, None)."""
+    import numpy as _np  # noqa
+
+    def get(k):
+        f = reader.fields.get(f"{arch}.attention.{k}")
+        return int(f.contents()) if f else None
+    nh = get("head_count")
+    return nh, (get("head_count_kv") or nh)
+
+
+def rope_perm(out: int, n_head: int):
+    """Row permutation convert_hf_to_gguf applies to q/k: gguf_row = hf_row[perm]."""
+    import numpy as np
+    return np.arange(out).reshape(n_head, 2, out // n_head // 2).swapaxes(1, 2).reshape(-1)
+
+
+def permute_out_cov(G, name: str, n_head: int | None, n_kv: int | None):
+    """Permute an output-side covariance (HF layout) into GGUF layout for q/k,
+    whose output rows are RoPE-permuted by the converter; identity otherwise."""
+    import numpy as np
+    if name.endswith("attn_q.weight") and n_head:
+        p = rope_perm(G.shape[0], n_head)
+    elif name.endswith("attn_k.weight") and n_kv:
+        p = rope_perm(G.shape[0], n_kv)
+    else:
+        return G
+    return np.ascontiguousarray(G[np.ix_(p, p)])

@@ -1,0 +1,22 @@
+# #2 NOVEL zero-data two-sided: input H + output G both from merge-rank-prior-
+# sampled tokens' LM gradients — no calibration text. Combines IO-SVD with the
+# Phase-3 zero-data prior.
+#   python -m distillrank run configs/smollm2-zerofisher.yaml
+name: smollm2-zerofisher-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: influence_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: zerofisher
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  device: cpu
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true

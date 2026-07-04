@@ -18,11 +18,12 @@ from . import evaltools, ggufio
 from .export_gguf import RankPolicy, export, export_from_factors, _fmt
 
 
-def _rank_policy(base_gguf: str, spec: dict, stats: dict | None = None) -> RankPolicy:
+def _rank_policy(base_gguf: str, spec: dict, stats: dict | None = None,
+                 stats_g: dict | None = None) -> RankPolicy:
     kind = spec.get("type", "full")
     if kind == "budget":
         from .planner import energy_for_budget
-        tau = energy_for_budget(base_gguf, float(spec["value"]), stats=stats)
+        tau = energy_for_budget(base_gguf, float(spec["value"]), stats=stats, stats_g=stats_g)
         print(f"[run] budget {spec['value']} -> energy threshold {tau:.4f}")
         return RankPolicy("energy", tau)
     return RankPolicy(kind, float(spec.get("value", 1.0)))
@@ -59,6 +60,28 @@ def _calibrate(model_dir: str, cal: dict) -> dict:
     raise ValueError(f"unknown calibration source: {source}")
 
 
+def _calibrate_influence(model_dir: str, cal: dict) -> tuple[dict, dict]:
+    """Two-sided (Fisher) calibration -> (H input cov, G output-grad cov).
+      source: data       -> IO-SVD from calibration text (arXiv:2605.15626)
+      source: zerofisher -> NOVEL zero-data: H and G from merge-rank-prior-sampled
+                            tokens' LM gradients (no calibration text)."""
+    source = cal.get("source", "data")
+    if source == "data":
+        from .calibrate import collect_influence
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_dir)
+        return collect_influence(model_dir, [open(cal["text"]).read()], tok,
+                                 seqlen=cal.get("seqlen", 512), max_seqs=cal.get("seqs", 8),
+                                 device=cal.get("device", "auto"))
+    if source == "zerofisher":
+        from .analytic import collect_influence_prior
+        return collect_influence_prior(model_dir, prior=cal.get("prior", "merge_rank"),
+                                       zipf_s=cal.get("zipf_s", 1.0), samples=cal.get("samples", 8192),
+                                       seqlen=cal.get("seqlen", 256), seed=cal.get("seed", 0),
+                                       device=cal.get("device", "cpu"))
+    raise ValueError(f"unknown influence calibration source: {source}")
+
+
 def run(cfg: dict) -> dict:
     name = cfg["name"]
     out_dir = Path(cfg.get("out_dir", "runs")) / name
@@ -69,20 +92,27 @@ def run(cfg: dict) -> dict:
     if not Path(base_gguf).exists():
         raise FileNotFoundError(f"base_gguf not found: {base_gguf} (run scripts/make_models.sh)")
 
-    method = cfg.get("method", "plain")           # plain | activation_aware
+    method = cfg.get("method", "plain")           # plain | activation_aware | influence_aware
     rank_spec = cfg.get("rank", {"type": "full"})
     ft_spec = cfg.get("finetune")                 # optional
-    needs_stats = method == "activation_aware"
+    needs_stats = method in ("activation_aware", "influence_aware")
 
     # --- calibration (only if needed) ---
-    stats = None
+    stats = stats_g = None
     if needs_stats:
         cal = cfg["calibration"]
-        stats = _calibrate(model["dir"], cal)
-        np.savez_compressed(out_dir / "stats.npz", **stats)
-        print(f"[run] calibrated {len(stats)} layers ({cal.get('source', 'data')})")
+        if method == "influence_aware":
+            stats, stats_g = _calibrate_influence(model["dir"], cal)
+            np.savez_compressed(out_dir / "stats.npz", **stats)
+            np.savez_compressed(out_dir / "stats_g.npz", **stats_g)
+            print(f"[run] two-sided calibrated {len(stats)} H + {len(stats_g)} G "
+                  f"({cal.get('source', 'data')})")
+        else:
+            stats = _calibrate(model["dir"], cal)
+            np.savez_compressed(out_dir / "stats.npz", **stats)
+            print(f"[run] calibrated {len(stats)} layers ({cal.get('source', 'data')})")
 
-    policy = _rank_policy(base_gguf, rank_spec, stats)
+    policy = _rank_policy(base_gguf, rank_spec, stats, stats_g)
     gguf_out = str(out_dir / "model.gguf")
 
     # --- factorize (+ optional finetune) ---
@@ -96,7 +126,7 @@ def run(cfg: dict) -> dict:
                           device=ft_spec.get("device", "auto"))
         st = export_from_factors(base_gguf, gguf_out, factors)
     else:
-        st = export(base_gguf, gguf_out, policy, stats=stats)
+        st = export(base_gguf, gguf_out, policy, stats=stats, stats_g=stats_g)
     print(_fmt(st, method))
 
     # --- eval ---

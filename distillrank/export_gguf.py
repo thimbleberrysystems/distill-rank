@@ -15,9 +15,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import ggufio
-from .factorize import RankPolicy, saves_params, svd_truncate, whiten_svd, _svd
+from .factorize import (RankPolicy, saves_params, svd_truncate, whiten_svd,
+                        two_sided_whiten_svd, _svd)
 
 import gguf  # noqa: E402  (path set up by ggufio)
+
+from .ggufio import head_meta as _head_meta, permute_out_cov as _g_to_gguf  # noqa: E402
 
 
 @dataclass
@@ -30,9 +33,11 @@ class ExportStats:
     per_tensor: list = field(default_factory=list)  # (name, out, in, r, err)
 
 
-def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=None):
+def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=None, G=None):
     out, in_ = W.shape
-    if H is not None:                       # activation-aware
+    if H is not None and G is not None:     # two-sided (Fisher-weighted, IO-SVD)
+        U, s, Vt, err = two_sided_whiten_svd(W, H, G, policy)
+    elif H is not None:                     # activation-aware (input only)
         U, s, Vt, err = whiten_svd(W, H, policy)
     else:                                   # plain SVD (single, torch-backed)
         Wc = np.ascontiguousarray(W, dtype=np.float32)
@@ -50,17 +55,20 @@ def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=
 
 
 def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = None,
-           merge: bool = False) -> ExportStats:
+           stats_g: dict | None = None, merge: bool = False) -> ExportStats:
     """Factorize each target linear.
 
-    stats: optional {gguf_base_name: input covariance H} for activation-aware truncation.
-    merge: if True, write the reconstructed dense low-rank weight W' = U diag(s) Vt under
-           the original tensor name (same size, runs on STOCK Ollama) instead of the
-           factors — for measuring rank-r quality without the patched runtime.
+    stats:   optional {gguf_base_name: input covariance H} for activation-aware truncation.
+    stats_g: optional {gguf_base_name: output covariance G} — when present with H, uses
+             two-sided (Fisher-weighted, IO-SVD) truncation. q/k G are permuted to GGUF layout.
+    merge:   if True, write the reconstructed dense low-rank weight W' = U diag(s) Vt under
+             the original tensor name (same size, runs on STOCK Ollama) instead of the
+             factors — for measuring rank-r quality without the patched runtime.
     """
     reader, arch = ggufio.open_reader(infile)
     writer = gguf.GGUFWriter(outfile, arch)
     ggufio.copy_kv(reader, writer)
+    n_head, n_kv = _head_meta(reader, arch)
     st = ExportStats()
 
     for t in reader.tensors:
@@ -76,7 +84,10 @@ def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = N
 
         if kind == "dense":
             H = stats.get(base) if stats else None
-            res = _factor_2d(data, policy, st, t.name, H=H)
+            G = stats_g.get(base) if stats_g else None
+            if G is not None:
+                G = _g_to_gguf(G, t.name, n_head, n_kv)
+            res = _factor_2d(data, policy, st, t.name, H=H, G=G)
             if res is None:
                 st.kept_dense += 1
                 st.new_params += data.size
