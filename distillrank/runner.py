@@ -62,9 +62,11 @@ def _calibrate(model_dir: str, cal: dict) -> dict:
 
 def _calibrate_influence(model_dir: str, cal: dict) -> tuple[dict, dict]:
     """Two-sided (Fisher) calibration -> (H input cov, G output-grad cov).
-      source: data       -> IO-SVD from calibration text (arXiv:2605.15626)
-      source: zerofisher -> NOVEL zero-data: H and G from merge-rank-prior-sampled
-                            tokens' LM gradients (no calibration text)."""
+      source: data          -> IO-SVD from calibration text (arXiv:2605.15626)
+      source: zerofisher    -> NOVEL zero-data: H and G from merge-rank-prior-sampled
+                               tokens' LM gradients (no calibration text)
+      source: hybrid_fisher -> best input side (hybrid analytic+tiny-data H) paired
+                               with the Fisher output side (G from the same tiny data)."""
     source = cal.get("source", "data")
     if source == "data":
         from .calibrate import collect_influence
@@ -79,6 +81,20 @@ def _calibrate_influence(model_dir: str, cal: dict) -> tuple[dict, dict]:
                                        zipf_s=cal.get("zipf_s", 1.0), samples=cal.get("samples", 8192),
                                        seqlen=cal.get("seqlen", 256), seed=cal.get("seed", 0),
                                        device=cal.get("device", "cpu"))
+    if source == "hybrid_fisher":
+        from .calibrate import collect_influence
+        from .analytic import analytic_covariance, mix_stats
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_dir)
+        h_data, g_data = collect_influence(model_dir, [open(cal["text"]).read()], tok,
+                                           seqlen=cal.get("seqlen", 256), max_seqs=cal.get("seqs", 2),
+                                           device=cal.get("device", "cpu"))
+        h_analytic = analytic_covariance(model_dir, mode=cal.get("mode", "mc"),
+                                         prior=cal.get("prior", "merge_rank"),
+                                         samples=cal.get("samples", 16384),
+                                         seqlen=cal.get("seqlen", 256), device=cal.get("device", "cpu"))
+        h_hybrid = mix_stats(h_analytic, h_data, float(cal.get("lambda", 0.5)))
+        return h_hybrid, g_data
     raise ValueError(f"unknown influence calibration source: {source}")
 
 

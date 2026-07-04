@@ -1,0 +1,24 @@
+# Best of both: hybrid input whitening (analytic+512tok) + Fisher output side.
+# Tests whether two-sided beats the hybrid input-only best (PPL 427).
+name: smollm2-hybridfisher-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: influence_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: hybrid_fisher
+  lambda: 0.5
+  mode: mc
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  text: data/eval/wiki.test.raw
+  seqs: 2
+  device: cpu
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true
