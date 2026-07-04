@@ -10,11 +10,11 @@ model's own weights and tokenizer.**
   <img src="docs/overview.svg" alt="Pipeline: a model's weight matrices are factored into U·s·Vᵀ, the rank is trimmed to shrink them, the factors are stored in a GGUF file, and a patched Ollama runs the factors natively; calibration chooses what to keep and an optional KD finetune recovers quality." width="940">
 </p>
 
-> **In one sentence:** an LLM is millions of numbers in big tables; this project
-> rewrites each table as a smaller stand-in, keeps only the parts that matter for
-> real text, and runs the result — smaller and, after a performance fix, *faster*
-> than the original. The new idea is choosing what matters without any example
-> text to learn from.
+> **In one sentence:** an LLM is millions of numbers arranged in big grids called
+> **matrices**; this project rewrites each matrix as a smaller stand-in, keeps only
+> the parts that matter for real text, and runs the result — smaller and, after a
+> performance fix, *faster* than the original. The new idea is choosing what
+> matters without any example text to learn from.
 
 ---
 
@@ -28,7 +28,7 @@ of magnitude of perplexity**. Lower perplexity = better.
   <img src="docs/variants.svg" alt="Horizontal bar chart of perplexity (log scale) for SmolLM2-135M at 0.60x size: plain SVD 82 million, analytic 65,041, random-token prior 4,045 (best zero-data), activation-aware 2,554, hybrid 427, hybrid+KD 129 (best overall); the original uncompressed model is 22." width="900">
 </p>
 
-**Headline (SmolLM2-135M, 0.60× params, CPU):** plain data-free SVD ≈ 8×10⁷ →
+**Headline (SmolLM2-135M, 0.60× budget, CPU):** plain data-free SVD ≈ 8×10⁷ →
 zero-data whitening 4,045 → hybrid (512 calibration tokens) 427 → hybrid + 200
 KD steps **129** — while running **faster than the uncompressed model** at both
 prefill and decode.
@@ -55,7 +55,7 @@ HellaSwag/Winogrande over 400 tasks; prefill/decode via `llama-bench` (pp/tg
 | **zero-data IO-SVD** | 0 | 373.8 | **1,888** | 25.2 | 47.0 | 1,684 | 64.3 |
 | **hybrid + prior-Fisher** | 512 | 370.6 | **419** | 27.0 | **54.2** | 1,649 | 64.1 |
 
-The last four rows are the Phase-4 two-sided arms (compare `input-only 8-seq` ↔
+The last four rows are the two-sided arms (compare `input-only 8-seq` ↔
 `data IO-SVD` for the data effect, `random-token prior` ↔ `zero-data IO-SVD` for
 the zero-data effect). Two-sided roughly halves PPL vs its input-only pair at
 equal size and speed, and **hybrid + prior-Fisher (419) edges past hybrid (427)
@@ -63,7 +63,9 @@ with the best compressed-model Winogrande (54.2, vs base 55.2)** — the only pl
 task accuracy visibly separates without KD. Otherwise, at this 0.6× budget
 HellaSwag/Winogrande hover near chance for compressed variants (base 41/55 →
 ~24-28 / ~47-54), so PPL is the discriminating metric here; accuracy separates
-cleanly only with KD recovery (or a gentler budget).
+cleanly only with KD recovery (or a gentler budget). (The pure-data rows are
+noisy — *24* seqs scoring worse than *2* is small-sample rank-allocation
+variance, exactly what the hybrid's shrinkage prior repairs.)
 
 **Qwen2.5-0.5B** (f32, 1,982 MB → ~1,410 MB):
 
@@ -83,12 +85,14 @@ arm is the obvious next run.
 
 **Reading the tradeoff:**
 
-- **Size**: a clean ~29–31% cut at budget 0.6×, identical across calibration
+- **Size**: a clean ~28–32% cut at budget 0.6×, identical across calibration
   methods — the rank plan sets the size; calibration sets the *quality* at that
   size.
-- **Speed** (post-alignment): every factored variant beats dense at prefill
-  (+4–8% SmolLM2, **+34–38% Qwen**) and at decode on Qwen (+21–24%); hybrid+KD
-  also leads SmolLM2 decode. Raw CSVs: `runs/benchmark-{smol,qwen}.csv`.
+- **Speed** (post-alignment): the zero-data and hybrid arms beat dense at prefill
+  (+4–8% on SmolLM2, **+30–37% on Qwen**), and *every* factored arm beats dense at
+  decode on Qwen (+22–26%). On SmolLM2 the two-sided arms sit within ~2% of dense
+  at prefill, and hybrid+KD is the one variant that also beats dense at decode
+  (70.4 vs 67.7 t/s). Raw CSVs: `runs/benchmark-{smol,qwen}.csv`.
 - **Quality**: calibration choice spans six orders of magnitude of PPL at
   identical size; KD recovery is decisive (hybrid+KD is the only variant within
   ~6× of base PPL and recovers HellaSwag toward base).
@@ -102,32 +106,34 @@ research framing straight away.)*
 
 ### The problem
 
-A large language model is, under the hood, a long stack of **big rectangular
-tables of numbers** — the "weights." Running the model means multiplying your
-text (turned into vectors) by these tables, over and over. The tables are what
-take up disk space and memory, and multiplying by them is most of the compute.
+A large language model is, under the hood, a long stack of **big grids of
+numbers** — the "weights." Mathematicians call each grid a **matrix** (think of a
+spreadsheet), and that is the word used throughout this README. Running the model
+means multiplying your text (turned into vectors) by these matrices, over and
+over. The matrices are what take up disk space and memory, and multiplying by
+them is most of the compute.
 
-The goal of this project: **make the tables smaller** — so the model needs less
+The goal of this project: **make the matrices smaller** — so the model needs less
 disk and memory and runs faster — **without making it noticeably dumber.**
 
 ### What SVD does (the photo-compression analogy)
 
 There's a classic piece of math, the **Singular Value Decomposition (SVD)**, that
-rewrites any one table `W` as a product of three thinner ones:
+rewrites any one matrix `W` as a product of three thinner ones:
 
 ```
     W   ≈   U  ·  s  ·  Vᵀ
  (big)     (tall)(few)(wide)
 ```
 
-You can think of it like **JPEG for a matrix**: it sorts the table's content into
+You can think of it like **JPEG for a matrix**: it sorts the matrix's content into
 "patterns," ordered from most to least important. If you keep only the top `r`
-patterns and throw away the long tail, you store three small tables instead of
-one big one. Keep `r` small enough and the three thin tables together hold *far
+patterns and throw away the long tail, you store three small matrices instead of
+one big one. Keep `r` small enough and the three thin matrices together hold *far
 fewer numbers* than the original — that's the compression. ("Low-rank" just means
 "we kept only the top `r` patterns.")
 
-**A concrete example.** One attention weight in these models is a 1536×1536 table
+**A concrete example.** One attention weight in these models is a 1536×1536 matrix
 = **2.36 million numbers**. Keep the top 205 patterns and you store
 205 × (1536 + 1536) ≈ **0.63 million numbers** — about **27%** of the original —
 and the model still writes coherent text.
@@ -148,11 +154,14 @@ domain with no corpus).
 ### The contribution, in one line
 
 **We compute "which patterns matter" from the model's own weights and its
-tokenizer — with zero example text** — and a **hybrid** that blends a *tiny* bit
-of text with that self-estimate beats using lots of text. On top of that, the
-compressed model doesn't just live in a Python simulation: a small patch makes
-**Ollama run the three-table form natively**, and after a performance fix it runs
-*faster* than the uncompressed model.
+tokenizer — with zero example text.** And a **hybrid** approach — take that
+zero-data self-estimate and blend it with a *tiny* real-text sample (a few
+hundred tokens) — beats using lots of text, because the steady self-estimate
+cancels the noise in the small sample. So "hybrid" throughout this README means
+exactly that: *the model's self-estimate averaged with a little real data.* On
+top of that, the compressed model doesn't just live in a Python simulation: a
+small patch makes **Ollama run the three-matrix form natively**, and after a
+performance fix it runs *faster* than the uncompressed model.
 
 The bar chart above tells the whole story: as you move from "no idea what
 matters" (plain SVD) to "read it from the model itself" (random-token / analytic)
@@ -163,12 +172,12 @@ same-sized model gets dramatically better.
 
 | term you'll see below | what it means in plain words |
 |---|---|
-| **weight matrix `W`** | one of the model's big number-tables |
+| **weight matrix `W`** | one of the model's big number grids |
 | **rank `r`** | how many "patterns" we keep; smaller = more compression |
 | **whitening / `H`** | the map of which input directions matter, learned from data |
 | **calibration** | the text (or, here, the *no text*) used to build that map |
 | **zero-data / analytic** | building that map from the model + tokenizer alone |
-| **hybrid** | mix a little real text with the zero-data estimate |
+| **hybrid** | the zero-data estimate blended with a little real text |
 | **KD (knowledge distillation)** | briefly retrain the small model to imitate the big one |
 | **perplexity (PPL)** | how "surprised" the model is by real text; **lower is better** |
 | **prefill / decode tok/s** | speed reading the prompt / speed writing the answer |
@@ -179,10 +188,10 @@ same-sized model gets dramatically better.
 
 - [Original contributions](#original-contributions)
 - [Background and related work](#background-and-related-work)
-- [Phase 1 — the factored-execution runtime](#phase-1--the-factored-execution-runtime)
-- [Phase 2 — the compression pipeline](#phase-2--the-compression-pipeline)
-- [Phase 3 — zero-data analytic whitening](#phase-3--zero-data-analytic-whitening)
-- [Phase 4 — influence-aware two-sided whitening](#phase-4--influence-aware-two-sided-whitening-data--zero-data)
+- [The factored-execution runtime](#the-factored-execution-runtime)
+- [The compression pipeline](#the-compression-pipeline)
+- [Zero-data analytic whitening](#zero-data-analytic-whitening)
+- [Influence-aware two-sided whitening](#influence-aware-two-sided-whitening-data--zero-data)
 - [Performance engineering: the rank-alignment bug](#performance-engineering-the-rank-alignment-bug)
 - [Repository layout](#repository-layout)
 - [Reproducing everything](#reproducing-everything)
@@ -215,18 +224,21 @@ cited inline so the reader can judge.
 
 2. **Hybrid shrinkage calibration — the analytic covariance as a prior.**
    `H = λ·Ĥ_analytic + (1−λ)·H_data(k)` with per-layer trace matching, in the
-   spirit of Ledoit–Wolf covariance shrinkage [15]. With **512 tokens** of real
-   data this beats *full* 12k-token calibration by ~8× perplexity at identical
-   model size (427 vs 3,632), because small-sample covariances in 1,536
-   dimensions are noise-dominated and the analytic prior regularizes exactly the
-   directions the sample cannot estimate. No prior art found for shrinkage-
-   regularized whitening in LLM compression.
+   spirit of Ledoit–Wolf covariance shrinkage [15]. Adding the analytic prior to
+   a **512-token** sample cuts perplexity from 2,554 (pure 512-token whitening) to
+   **427** — ~6× — at identical model size, and beats every larger pure-data run
+   in our benchmark (up to 12k tokens). The prior is worth roughly **8× the data**
+   (256 tokens + prior beats 2,048 tokens of pure data; see the sweep below),
+   because small-sample covariances in 1,536 dimensions are noise-dominated and
+   the analytic prior regularizes exactly the directions the sample cannot
+   estimate. No prior art found for shrinkage-regularized whitening in LLM
+   compression.
 
 3. **Analytic moment propagation (and an instructive negative result).** A fully
    data-free estimator that propagates the residual stream's Gaussian moments
    `(μ_l, Σ_l)` layer by layer — sampling from the analytic Gaussian and pushing
    the samples through the *real* decoder layers, re-fitting moments after each
-   layer. It works (65k PPL vs 8×10⁷ plain) but is ~3× *worse* than simply
+   layer. It works (65k PPL vs 8×10⁷ plain) but is ~16× *worse* than simply
    sampling random token ids: **moment-matched Gaussianization destroys the
    heavy-tailed activation structure that FFN whitening depends on.** A companion
    experiment shows pure random *noise* does worse than no whitening at all —
@@ -277,9 +289,9 @@ layers. Sparse-plus-low-rank and quantization-plus-low-rank hybrids (SLiM [4],
 HASSLE-free [17], 3BASiL [18], CALDERA-style low-precision factorization)
 combine decompositions. Mixed precision along the singular spectrum exists for
 delta weights and adapters (Delta-compression QEM [5], LoRAQuant [19],
-SVDq [20]). Phase 2 of this repo implements the standard lineage ([1,2] plus
-budget allocation and KD recovery) as the baseline; Phase 3's zero-data and
-shrinkage calibration are, to our knowledge, not in this literature.
+SVDq [20]). This repo implements the standard lineage ([1,2] plus budget
+allocation and KD recovery) as its baseline; the zero-data and shrinkage
+calibration described below are, to our knowledge, not in this literature.
 
 **Data-free calibration elsewhere.** LLM-QAT [11] pioneered data-free
 quantization-aware training with model-generated data; Self-Calibration [12]
@@ -287,7 +299,7 @@ does the same for PTQ/pruning. Both *generate* data with the model. The
 merge-rank prior here needs no generation — the tokenizer already encodes
 corpus statistics [13,14].
 
-## Phase 1 — the factored-execution runtime
+## The factored-execution runtime
 
 Every linear weight `W` (`[out, in]`, or `[n_expert, out, in]` for MoE expert
 stacks) is replaced by three tensors from its thin SVD:
@@ -297,8 +309,8 @@ W = U · diag(s) · Vᵀ        U:[out, r]   s:[r]   Vᵀ:[r, in]   r = min(out,
 ```
 
 At full rank this is loss-less — the model is simply **stored, and executed, as
-three matrices per linear instead of one**. Truncating `r` (Phase 2) turns it
-into genuine compression: `r(out+in) < out·in` parameters and FLOPs.
+three matrices per linear instead of one**. Truncating `r` (the compression step
+below) turns it into genuine compression: `r(out+in) < out·in` parameters and FLOPs.
 
 ### Architecture-agnostic by construction
 
@@ -346,7 +358,7 @@ through `build_lora_mm`/`build_lora_mm_id` (llama, qwen2/3, gemma, phi,
 mistral, mixtral, qwen3-moe, …); MLA `attn_*_a/_b` and SSM/conv weights are
 deliberately skipped (not plain linear projections).
 
-## Phase 2 — the compression pipeline
+## The compression pipeline
 
 `distillrank/` is a config-driven pipeline: **calibrate → factorize
 [activation-aware] [+ finetune] → export GGUF → evaluate**, one YAML per run,
@@ -372,24 +384,26 @@ artifacts under `runs/<name>/{stats.npz, model.gguf, results.json}`.
   freeze everything else, distill against the original model's logits (KL) on
   unlabeled text; export factors back to GGUF.
 
-### Phase-2 reference results (SmolLM2-135M)
+### A gentler operating point (SmolLM2-135M, 0.86× params)
 
-Plain data-free SVD is catastrophic on small dense models (fracs ≥ 0.5 are
-no-ops via break-even; below that, PPL explodes to ~10⁷). Whitening repairs
-most of it; KD closes in further — at frac 0.6 (0.86× params): base 22.4 |
-plain 3.9×10⁷ | activation-aware 54.5 | +200 KD steps (CPU) **30.5**.
+The tables at the top use an aggressive 0.60× budget. At a milder setting — keep
+60% of each matrix's rank, i.e. 0.86× params — the same pipeline lands much closer
+to the original: base 22.4 | plain data-free SVD 3.9×10⁷ | activation-aware 54.5 |
++200 KD steps (CPU) **30.5** (within ~1.4× of base). Plain SVD is catastrophic on
+small dense models at any budget; whitening repairs most of it and KD closes in
+further.
 
-## Phase 3 — zero-data analytic whitening
+## Zero-data analytic whitening
 
 **Question:** can the whitening covariance be derived from the model itself,
 with zero calibration data? Motivation: calibration data is a real deployment
 constraint (private domains, licensing, no representative text), the field only
-*reduces* it [8], and — as Phase 2 shows — whitening is worth 4–6 orders of
-magnitude of perplexity, so its data dependence matters. The
+*reduces* it [8], and — as the results above show — whitening is worth 4–6 orders
+of magnitude of perplexity, so its data dependence matters. The
 [Results-at-a-glance chart](#results-at-a-glance) is exactly this question:
 each branch is a different source for the whitening covariance `H`.
 
-All Phase-3 estimators emit the same `{gguf_name: H}` dict the rest of the
+All these estimators emit the same `{gguf_name: H}` dict the rest of the
 pipeline consumes; nothing downstream changes. Selected per run by
 `calibration.source: data | random_tokens | analytic | hybrid`.
 
@@ -419,7 +433,7 @@ energy capture 0.81 / 0.80 / 0.78 against measured stats).
   RoPE/GQA/softmax/SiLU — exact within the simulation, residual cross-terms
   free), re-fit moments, repeat; final norm gives the `output` head covariance.
   Randomness comes only from the analytic Gaussian — still zero data. **Negative
-  result:** ~3× worse than `random_tokens`; the moment-matching projection
+  result:** ~16× worse than `random_tokens`; the moment-matching projection
   destroys the heavy-tailed structure that decides which FFN channels matter.
 - **`hybrid`** — `H = λ·Ĥ_analytic·(tr H_d / tr Ĥ) + (1−λ)·H_data(k seqs)`:
   the analytic covariance as a shrinkage prior [15] over a tiny sample
@@ -479,9 +493,9 @@ similarity, is the arbiter**. Measured covariances are extremely top-heavy
 activations" phenomenon), which is why a prior that nails a handful of
 dominant directions already buys most of the whitening benefit.
 
-## Phase 4 — influence-aware two-sided whitening (data & zero-data)
+## Influence-aware two-sided whitening (data & zero-data)
 
-Activation-aware whitening (Phases 2–3) minimizes the *input*-side error
+Activation-aware whitening (above) minimizes the *input*-side error
 ‖(W−Wᵣ)X‖. But what matters is the effect on the model's **loss**, not on the
 activations. Two-sided (Fisher-weighted) whitening adds an *output*-side metric:
 with input covariance `H = Σ xxᵀ` and output-gradient covariance `G = Σ ggᵀ`
@@ -491,8 +505,8 @@ IO-SVD [21] and Generalized Fisher-Weighted SVD [22] — implemented here as an
 attributed baseline (`factorize.two_sided_whiten_svd`, `method: influence_aware`).
 
 **The novel contribution is doing it with zero data.** IO-SVD needs calibration
-text for *both* sides. Phase 3 already gets the input side H with zero data from
-the merge-rank prior; the output side G can come the same way — from the LM-loss
+text for *both* sides. The zero-data whitening above already gets the input side H
+with no data from the merge-rank prior; the output side G can come the same way — from the LM-loss
 gradients of prior-sampled tokens (`analytic.collect_influence_prior`,
 `source: zerofisher`). "Zero-data Fisher-weighted SVD" is, as far as we can tell,
 new.
@@ -585,10 +599,10 @@ microbench of the same shapes is the fast falsifier.
 | path | purpose |
 |------|---------|
 | `patches/svd-generic.patch` | the llama.cpp change (5 files: load hook + 2 graph ops + wiring) |
-| `svd_export.py` | Phase-1 GGUF post-processor: read each `W`, write `U/s/Vᵀ` (any arch; `--rank N`) |
+| `svd_export.py` | GGUF post-processor: read each `W`, write `U/s/Vᵀ` (any arch; `--rank N`) |
 | `distillrank/factorize.py` | plain + whitened SVD, rank policies (align=8), break-even guard |
 | `distillrank/calibrate.py` | data calibration: per-linear covariance hooks, HF→GGUF name map |
-| `distillrank/analytic.py` | Phase 3: token priors, exact layer-0 H, moment propagation, `mix_stats`, diagnostics |
+| `distillrank/analytic.py` | zero-data calibration: token priors, exact layer-0 H, moment propagation, `mix_stats`, diagnostics |
 | `distillrank/planner.py` | global rank budget (binary-searched energy threshold) |
 | `distillrank/finetune/distill.py`, `distillrank/ir.py` | KD recovery on `LowRankLinear` factors |
 | `distillrank/export_gguf.py`, `distillrank/ggufio.py` | factored + merged GGUF writer (dense + MoE, RoPE permutation) |
@@ -613,11 +627,11 @@ dirs. The patched Ollama stores served models under
 scripts/setup_env.sh && scripts/build_ollama.sh && scripts/build_tools.sh
 scripts/get_eval_data.sh
 
-# 1. Phase 1: loss-less factored execution, token parity
+# 1. loss-less factored execution, token parity
 scripts/make_models.sh HuggingFaceTB/SmolLM2-135M smollm2-135m
 ./verify.sh smollm2-135m out/smollm2-135m-base-f32.gguf out/smollm2-135m-svd-f32.gguf
 
-# 2. Phase 3 arms (each writes runs/<name>/{stats.npz,model.gguf,results.json})
+# 2. calibration arms (each writes runs/<name>/{stats.npz,model.gguf,results.json})
 python -m distillrank run configs/smollm2-randtok-budget06.yaml    # zero data
 python -m distillrank run configs/smollm2-analytic-budget06.yaml  # zero data, MC
 python -m distillrank run configs/smollm2-hybrid-budget06.yaml    # + 512 tokens
