@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 340" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect x="0.5" y="0.5" width="979" height="339" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+
+  <text x="28" y="36" fill="#0f172a" font-size="17" font-weight="700">From one weight matrix to three small ones — and back at run time</text>
+
+  <!-- calibration feeder -->
+  <rect x="300" y="58" width="374" height="46" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="487" y="80" fill="#1d4ed8" font-size="13" font-weight="600" text-anchor="middle">Calibration — how important is each direction?</text>
+  <text x="487" y="97" fill="#3b82f6" font-size="11.5" text-anchor="middle">real data · zero-data (from the model itself) · hybrid</text>
+  <path d="M487 104 L487 158" stroke="#93c5fd" stroke-width="2" fill="none" marker-end="url(#ab)"/>
+
+  <!-- pipeline boxes -->
+  <g>
+    <rect x="24"  y="170" width="165" height="90" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="106" y="207" fill="#0f172a" font-size="14.5" font-weight="600" text-anchor="middle">The model</text>
+    <text x="106" y="228" fill="#64748b" font-size="12" text-anchor="middle">a stack of big</text>
+    <text x="106" y="243" fill="#64748b" font-size="12" text-anchor="middle">number tables</text>
+
+    <rect x="214" y="170" width="165" height="90" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="296" y="200" fill="#0f172a" font-size="14.5" font-weight="600" text-anchor="middle">Factor it</text>
+    <text x="296" y="222" fill="#334155" font-size="13" text-anchor="middle" font-style="italic">W = U · s · Vᵀ</text>
+    <text x="296" y="243" fill="#64748b" font-size="12" text-anchor="middle">three matrices</text>
+
+    <rect x="404" y="170" width="165" height="90" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="486" y="200" fill="#0f172a" font-size="14.5" font-weight="600" text-anchor="middle">Trim it</text>
+    <text x="486" y="222" fill="#64748b" font-size="12" text-anchor="middle">keep the top r</text>
+    <text x="486" y="237" fill="#64748b" font-size="12" text-anchor="middle">directions → smaller</text>
+
+    <rect x="594" y="170" width="165" height="90" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="676" y="200" fill="#0f172a" font-size="14.5" font-weight="600" text-anchor="middle">Factored file</text>
+    <text x="676" y="222" fill="#64748b" font-size="12" text-anchor="middle">U / s / Vᵀ stored</text>
+    <text x="676" y="237" fill="#64748b" font-size="12" text-anchor="middle">per layer (GGUF)</text>
+
+    <rect x="784" y="170" width="172" height="90" rx="12" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="870" y="200" fill="#166534" font-size="14.5" font-weight="600" text-anchor="middle">Run natively</text>
+    <text x="870" y="222" fill="#15803d" font-size="12" text-anchor="middle">patched Ollama runs</text>
+    <text x="870" y="237" fill="#15803d" font-size="12" text-anchor="middle">the factors directly</text>
+  </g>
+
+  <!-- arrows between boxes -->
+  <g stroke="#94a3b8" stroke-width="2" fill="none">
+    <path d="M189 215 L214 215" marker-end="url(#a)"/>
+    <path d="M379 215 L404 215" marker-end="url(#a)"/>
+    <path d="M569 215 L594 215" marker-end="url(#a)"/>
+    <path d="M759 215 L784 215" marker-end="url(#a)"/>
+  </g>
+
+  <!-- KD feeder -->
+  <rect x="520" y="284" width="240" height="40" rx="10" fill="#fef9c3" stroke="#fde68a"/>
+  <text x="640" y="309" fill="#a16207" font-size="12.5" font-weight="600" text-anchor="middle">optional: KD finetune to recover quality</text>
+  <path d="M676 284 L676 260" stroke="#facc15" stroke-width="2" fill="none" marker-end="url(#ay)"/>
+
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#94a3b8"/></marker>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#93c5fd"/></marker>
+    <marker id="ay" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#facc15"/></marker>
+  </defs>
+</svg>

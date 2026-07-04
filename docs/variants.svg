@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 372" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect x="0.5" y="0.5" width="979" height="371" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+
+  <text x="28" y="34" fill="#0f172a" font-size="17" font-weight="700">One knob, six orders of magnitude: where the calibration comes from</text>
+  <text x="28" y="55" fill="#64748b" font-size="12.5">SmolLM2-135M at 0.60× size · perplexity, lower is better · log scale · same model size across every row</text>
+
+  <!-- base reference line -->
+  <line x1="278" y1="74" x2="278" y2="342" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="278" y="70" fill="#0284c7" font-size="11" text-anchor="middle">original model · 22</text>
+
+  <!-- axis baseline -->
+  <line x1="250" y1="78" x2="810" y2="78" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- rows: worst at top, improving downward to the green winner -->
+  <!-- row 1: plain SVD -->
+  <text x="238" y="99" fill="#0f172a" font-size="13" font-weight="600" text-anchor="end">plain SVD</text>
+  <text x="238" y="114" fill="#94a3b8" font-size="10.5" text-anchor="end">0 tokens · no whitening</text>
+  <rect x="250" y="90" width="553" height="22" rx="4" fill="#93c5fd"/>
+  <text x="956" y="106" fill="#1e3a8a" font-size="12.5" font-weight="600" text-anchor="end">82,352,435</text>
+
+  <!-- row 2: analytic MC -->
+  <text x="238" y="145" fill="#0f172a" font-size="13" font-weight="600" text-anchor="end">analytic (Gaussian)</text>
+  <text x="238" y="160" fill="#94a3b8" font-size="10.5" text-anchor="end">0 tokens</text>
+  <rect x="250" y="136" width="305" height="22" rx="4" fill="#93c5fd"/>
+  <text x="590" y="152" fill="#1e3a8a" font-size="12.5" font-weight="600" text-anchor="start">65,041</text>
+
+  <!-- row 3: random-token prior -->
+  <text x="238" y="191" fill="#0f172a" font-size="13" font-weight="600" text-anchor="end">random-token prior</text>
+  <text x="238" y="206" fill="#2563eb" font-size="10.5" text-anchor="end">0 tokens · best zero-data</text>
+  <rect x="250" y="182" width="209" height="22" rx="4" fill="#2563eb"/>
+  <text x="494" y="198" fill="#1e3a8a" font-size="12.5" font-weight="600" text-anchor="start">4,045</text>
+
+  <!-- row 4: activation-aware -->
+  <text x="238" y="237" fill="#0f172a" font-size="13" font-weight="600" text-anchor="end">activation-aware</text>
+  <text x="238" y="252" fill="#94a3b8" font-size="10.5" text-anchor="end">512 real tokens</text>
+  <rect x="250" y="228" width="193" height="22" rx="4" fill="#f59e0b"/>
+  <text x="478" y="244" fill="#b45309" font-size="12.5" font-weight="600" text-anchor="start">2,554</text>
+
+  <!-- row 5: hybrid -->
+  <text x="238" y="283" fill="#0f172a" font-size="13" font-weight="600" text-anchor="end">hybrid ★</text>
+  <text x="238" y="298" fill="#94a3b8" font-size="10.5" text-anchor="end">512 tokens + zero-data prior</text>
+  <rect x="250" y="274" width="130" height="22" rx="4" fill="#f59e0b"/>
+  <text x="415" y="290" fill="#b45309" font-size="12.5" font-weight="600" text-anchor="start">427</text>
+
+  <!-- row 6: hybrid + KD -->
+  <text x="238" y="329" fill="#0f172a" font-size="13" font-weight="600" text-anchor="end">hybrid + KD finetune</text>
+  <text x="238" y="344" fill="#16a34a" font-size="10.5" text-anchor="end">512 tokens + recovery · best overall</text>
+  <rect x="250" y="320" width="89" height="22" rx="4" fill="#16a34a"/>
+  <text x="374" y="336" fill="#166534" font-size="12.5" font-weight="700" text-anchor="start">129</text>
+
+  <!-- legend -->
+  <rect x="712" y="300" width="12" height="12" rx="3" fill="#2563eb"/>
+  <text x="730" y="310" fill="#475569" font-size="11">zero data</text>
+  <rect x="712" y="320" width="12" height="12" rx="3" fill="#f59e0b"/>
+  <text x="730" y="330" fill="#475569" font-size="11">+ real tokens</text>
+  <rect x="712" y="340" width="12" height="12" rx="3" fill="#16a34a"/>
+  <text x="730" y="350" fill="#475569" font-size="11">+ KD recovery</text>
+</svg>
