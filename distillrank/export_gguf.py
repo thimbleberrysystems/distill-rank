@@ -38,9 +38,14 @@ def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=
     if H is not None and G is not None:     # two-sided (Fisher-weighted, IO-SVD)
         # Allocate rank from the INPUT-whitened spectrum (measured better than the
         # doubly-whitened allocation), then factorize two-sided at that fixed rank.
-        from .planner import _svdvals
-        r = policy.choose(_svdvals(W, H), out, in_)
-        U, s, Vt, err = two_sided_whiten_svd(W, H, G, RankPolicy("fixed", r, align=policy.align))
+        # Reuse one Cholesky of H for both steps (the [in,in] chol dominates cost).
+        import torch
+        from .factorize import _damped_cholesky
+        S = _damped_cholesky(H)
+        Wt = torch.tensor(np.ascontiguousarray(W), dtype=torch.float64)
+        sig_in = torch.linalg.svdvals(Wt @ S).to(torch.float32).numpy()
+        r = policy.choose(sig_in, out, in_)
+        U, s, Vt, err = two_sided_whiten_svd(W, H, G, RankPolicy("fixed", r, align=policy.align), S=S)
     elif H is not None:                     # activation-aware (input only)
         U, s, Vt, err = whiten_svd(W, H, policy)
     else:                                   # plain SVD (single, torch-backed)

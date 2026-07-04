@@ -108,23 +108,27 @@ def whiten_svd(W: np.ndarray, H: np.ndarray, policy: "RankPolicy",
             np.ascontiguousarray(svd_vt.to(torch.float32).numpy()), err)
 
 
+def _damped_cholesky(M: np.ndarray, damp: float = 1e-3):
+    """chol(M + damp·mean(diag)·I) as float64 torch — reusable across calls."""
+    Mt = torch.tensor(np.ascontiguousarray(M), dtype=torch.float64)
+    eps = damp * torch.diagonal(Mt).mean().clamp(min=1e-8)
+    return torch.linalg.cholesky(Mt + eps * torch.eye(Mt.shape[0], dtype=torch.float64))
+
+
 def two_sided_whiten_svd(W: np.ndarray, H: np.ndarray, G: np.ndarray, policy: "RankPolicy",
-                         damp: float = 1e-3) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+                         damp: float = 1e-3, S=None) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Input-output (Fisher-weighted) truncation, cf. IO-SVD / GFWSVD.
 
     H = Σ xxᵀ (input activations), G = Σ ggᵀ (output loss-gradients). Factor
     the doubly-whitened matrix L·W·S (H=SSᵀ, G=LLᵀ), keep rank r, then un-whiten
     both sides. Minimizes the 2nd-order loss impact tr((W−W_r)ᵀG(W−W_r)H) instead
     of plain activation error ‖(W−W_r)X‖. Returns runtime factors (U,s,Vt).
+    Pass a pre-computed S = chol(H+damp) to avoid recomputing it for rank selection.
     """
     Wt = torch.tensor(np.ascontiguousarray(W), dtype=torch.float64)
-    Ht = torch.tensor(np.ascontiguousarray(H), dtype=torch.float64)
-    Gt = torch.tensor(np.ascontiguousarray(G), dtype=torch.float64)
-    n_in, n_out = Ht.shape[0], Gt.shape[0]
-    epsH = damp * torch.diagonal(Ht).mean().clamp(min=1e-8)
-    epsG = damp * torch.diagonal(Gt).mean().clamp(min=1e-8)
-    S = torch.linalg.cholesky(Ht + epsH * torch.eye(n_in, dtype=torch.float64))    # H = S Sᵀ
-    L = torch.linalg.cholesky(Gt + epsG * torch.eye(n_out, dtype=torch.float64))   # G = L Lᵀ
+    if S is None:
+        S = _damped_cholesky(H, damp)                                             # H = S Sᵀ
+    L = _damped_cholesky(G, damp)                                                  # G = L Lᵀ
     U, sig, Vt = torch.linalg.svd(L @ Wt @ S, full_matrices=False)                 # doubly whitened
     r = policy.choose(sig.numpy().astype(np.float32), W.shape[0], W.shape[1])
     U, sig, Vt = U[:, :r], sig[:r], Vt[:r, :]

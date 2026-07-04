@@ -95,6 +95,25 @@ def _calibrate_influence(model_dir: str, cal: dict) -> tuple[dict, dict]:
                                          seqlen=cal.get("seqlen", 256), device=cal.get("device", "cpu"))
         h_hybrid = mix_stats(h_analytic, h_data, float(cal.get("lambda", 0.5)))
         return h_hybrid, g_data
+    if source == "hybrid_priorfisher":
+        # hybrid input H (analytic + tiny data) + zero-data Fisher output G from
+        # 16k prior-sampled tokens (well-estimated, unlike a 2-seq data G).
+        from .calibrate import collect_covariance
+        from .analytic import analytic_covariance, mix_stats, collect_influence_prior
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_dir)
+        h_data = collect_covariance(model_dir, [open(cal["text"]).read()], tok,
+                                    seqlen=cal.get("seqlen", 256), max_seqs=cal.get("seqs", 2),
+                                    device=cal.get("device", "cpu"))
+        h_analytic = analytic_covariance(model_dir, mode=cal.get("mode", "mc"),
+                                         prior=cal.get("prior", "merge_rank"),
+                                         samples=cal.get("samples", 16384),
+                                         seqlen=cal.get("seqlen", 256), device=cal.get("device", "cpu"))
+        h_hybrid = mix_stats(h_analytic, h_data, float(cal.get("lambda", 0.5)))
+        _, g_prior = collect_influence_prior(model_dir, prior=cal.get("prior", "merge_rank"),
+                                             samples=cal.get("samples", 16384),
+                                             seqlen=cal.get("seqlen", 256), device=cal.get("device", "cpu"))
+        return h_hybrid, g_prior
     raise ValueError(f"unknown influence calibration source: {source}")
 
 
