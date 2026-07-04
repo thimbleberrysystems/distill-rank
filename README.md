@@ -114,6 +114,17 @@ cited inline so the reader can judge.
    prefill and decode**. We found no published discussion of SIMD-alignment
    constraints in rank selection for low-rank LLM inference.
 
+6. **Zero-data Fisher-weighted (two-sided) whitening.** Two-sided whitening —
+   truncating in both an input-activation and an output-loss-gradient metric — is
+   published (IO-SVD [21], GFWSVD [22]) and needs calibration text for *both*
+   sides; this repo implements it as an attributed baseline. The new part is
+   obtaining the output-side Fisher signal with **zero data**, from the LM-loss
+   gradients of merge-rank-prior-sampled tokens (extending contribution 1). It
+   beats zero-data input-only whitening by 53% and even beats *data-based*
+   input-only whitening at equal size. We also document that two-sided whitening
+   must **skip q/k** (their softmax-attention output path breaks the Fisher
+   linearization — measured ~2.7× worse), which we did not find noted elsewhere.
+
 ## Background and related work
 
 **Activation-aware low-rank compression.** Plain truncated SVD minimizes
@@ -373,6 +384,61 @@ similarity, is the arbiter**. Measured covariances are extremely top-heavy
 activations" phenomenon), which is why a prior that nails a handful of
 dominant directions already buys most of the whitening benefit.
 
+## Phase 4 — influence-aware two-sided whitening (data & zero-data)
+
+Activation-aware whitening (Phases 2–3) minimizes the *input*-side error
+‖(W−Wᵣ)X‖. But what matters is the effect on the model's **loss**, not on the
+activations. Two-sided (Fisher-weighted) whitening adds an *output*-side metric:
+with input covariance `H = Σ xxᵀ` and output-gradient covariance `G = Σ ggᵀ`
+(g = ∂loss/∂y), truncate the SVD of `L·W·S` (`H=SSᵀ`, `G=LLᵀ`), minimizing the
+second-order loss impact `tr((W−Wᵣ)ᵀ G (W−Wᵣ) H)`. This is a **known** method —
+IO-SVD [21] and Generalized Fisher-Weighted SVD [22] — implemented here as an
+attributed baseline (`factorize.two_sided_whiten_svd`, `method: influence_aware`).
+
+**The novel contribution is doing it with zero data.** IO-SVD needs calibration
+text for *both* sides. Phase 3 already gets the input side H with zero data from
+the merge-rank prior; the output side G can come the same way — from the LM-loss
+gradients of prior-sampled tokens (`analytic.collect_influence_prior`,
+`source: zerofisher`). "Zero-data Fisher-weighted SVD" is, as far as we can tell,
+new.
+
+Two hard-won recipe details (a naive full integration first scored *worse* than
+input-only, PPL 7,855):
+
+- **Skip q/k.** Two-sided whitening on the query/key projections *hurts* (~2.7×
+  worse PPL) because their outputs feed the softmax attention scores — a strongly
+  nonlinear path where the Gauss-Newton/Fisher linearization breaks. G is
+  collected only for `attn_v`, `attn_output`, `ffn_*` (`_wants_output_cov`);
+  `output`/lm_head is also skipped (its G is `[vocab,vocab]` — intractable and
+  rank-deficient).
+- **Allocate rank from the input-whitened spectrum**, then factorize two-sided at
+  that rank. The doubly-whitened *allocation* was measurably worse than the
+  input-only one; the win is in the *factorization*, not the rank budget.
+
+Results (SmolLM2-135M, budget 0.6×, wikitext PPL, base 22.4), matched-calibration
+pairs isolate the two-sided effect:
+
+| calibration | input-only | **two-sided (IO-SVD)** | Δ |
+|---|---|---|---|
+| **zero data** (prior) | 4,045 | **1,888** | **−53%** |
+| 4k tokens (8 seqs) | 3,672 | **1,356** | **−63%** |
+
+Two takeaways: the output-influence signal is worth a large quality gain at equal
+size, and — the striking one — **zero-data two-sided (1,888) beats data-based
+input-only whitening (3,672)**: a well-chosen *metric* with no data outperforms
+real activation statistics without it. (The strongest input-only arm, hybrid at
+PPL 427, uses a richer analytic+512-token calibration; combining hybrid input
+whitening with the Fisher output side is the natural next step.) Size, speed and
+task-accuracy for these arms are in [Full benchmarks](#full-benchmarks) — they
+match their input-only pairs on size/throughput (the gain is pure quality), and
+at this 0.6× budget HellaSwag/Winogrande sit near chance for all compressed
+variants, so PPL is the discriminating metric here.
+
+```bash
+python -m distillrank run configs/smollm2-influence.yaml    # data IO-SVD
+python -m distillrank run configs/smollm2-zerofisher.yaml   # zero-data (novel)
+```
+
 ## Performance engineering: the rank-alignment bug
 
 First benchmarks showed factored prefill *slower* than dense (1,148 vs 1,552
@@ -418,6 +484,17 @@ prefill/decode via `llama-bench` (pp/tg 128), 24-thread CPU.
 | data 24-seq | 12k | 369.1 | 9,002 | 26.5 | 49.0 | 1,662 | 63.6 |
 | hybrid | 512 | 370.6 | 427 | 27.0 | 51.5 | 1,707 | 65.7 |
 | **hybrid + KD** | 512+KD | 370.6 | **129** | 28.5 | 51.8 | 1,752 | **70.4** |
+| input-only (data 8-seq) | 4k | 369.6 | 3,672 | 25.2 | 46.8 | 1,664 | 59.9 |
+| **data IO-SVD (2-sided)** | 4k | 369.6 | **1,356** | 23.5 | 50.2 | 1,708 | 60.7 |
+| **zero-data IO-SVD** | 0 | 373.8 | **1,888** | 25.2 | 47.0 | 1,702 | 64.2 |
+
+The last three rows are the Phase-4 two-sided arms (compare `input-only 8-seq` ↔
+`data IO-SVD` for the data effect, `random-token prior` ↔ `zero-data IO-SVD` for
+the zero-data effect). Two-sided roughly halves PPL vs its input-only pair at
+equal size and speed. Note that at this 0.6× budget HellaSwag/Winogrande hover
+near chance for *every* compressed variant (base 41/55 → ~24-28 / ~47-52), so at
+this operating point PPL is the discriminating metric; accuracy separates only
+with KD recovery (or a gentler budget).
 
 **Qwen2.5-0.5B** (f32, 1,982 MB → ~1,410 MB):
 
@@ -554,3 +631,7 @@ patch (Ollama compat patches don't link standalone).
     [arXiv:2510.26690](https://arxiv.org/abs/2510.26690)
 20. *SVDq: 1.25-bit and 410× Key Cache Compression for LLM Attention*,
     [arXiv:2502.15304](https://arxiv.org/abs/2502.15304)
+21. *IO-SVD: Input-Output Whitened SVD for Adaptive-Rank LLM Compression*,
+    [arXiv:2605.15626](https://arxiv.org/abs/2605.15626)
+22. *Generalized Fisher-Weighted SVD: Scalable Kronecker-Factored Fisher
+    Approximation for Compressing LLMs*, [arXiv:2505.17974](https://arxiv.org/abs/2505.17974)
