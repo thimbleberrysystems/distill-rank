@@ -1,0 +1,27 @@
+# Hybrid whitening + Q8_0 factor quantization: svd_u/svd_vt stored as ggml Q8_0
+# (svd_s stays F32). ~2x smaller + faster CPU decode at ~free quality; ranks are
+# aligned to the 32-wide quant block. Runs natively on the patched runtime.
+#   python -m distillrank run configs/smollm2-hybrid-q8-budget06.yaml
+name: smollm2-hybrid-q8-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: hybrid
+  lambda: 0.5
+  mode: mc
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  text: data/eval/wiki.test.raw
+  seqs: 2
+export:
+  quant: q8_0
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true

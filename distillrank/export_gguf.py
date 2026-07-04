@@ -10,7 +10,7 @@ Non-target tensors (embeddings, norms, biases, router) are copied verbatim.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -21,6 +21,30 @@ from .factorize import (RankPolicy, saves_params, svd_truncate, whiten_svd,
 import gguf  # noqa: E402  (path set up by ggufio)
 
 from .ggufio import head_meta as _head_meta, permute_out_cov as _g_to_gguf  # noqa: E402
+
+# Factor quantization: store svd_u/svd_vt as a ggml quantized type (svd_s stays
+# F32 — it's a tiny r-vector that quarantines the heavy dynamic range). Only
+# 32-block types are usable: the U-side matmul contracts over the rank r, so r
+# (and the Vt input dim) must be a multiple of the block size. Q4_K/Q6_K use
+# 256-wide superblocks — impractical for these small ranks — so they're excluded.
+_QUANT = {
+    "q8_0": gguf.GGMLQuantizationType.Q8_0,
+    "q4_0": gguf.GGMLQuantizationType.Q4_0,
+}
+_QUANT_BLOCK = 32
+
+
+def _write_factor(writer, name: str, arr: np.ndarray, qtype) -> None:
+    """Write a factor tensor, quantized to qtype when its quantized (last) axis is
+    a multiple of the block size; otherwise F32. ggml quantizes/contracts along
+    ne0 = the numpy last axis, so that axis is what must align."""
+    arr = np.ascontiguousarray(arr, dtype=np.float32)
+    if qtype is not None and arr.shape[-1] % _QUANT_BLOCK == 0:
+        from gguf.quants import quantize
+        # add_tensor derives the logical shape from the quantized byte array's shape
+        writer.add_tensor(name, quantize(arr, qtype), raw_dtype=qtype)
+    else:
+        writer.add_tensor(name, arr, raw_dtype=gguf.GGMLQuantizationType.F32)
 
 
 @dataclass
@@ -64,7 +88,8 @@ def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=
 
 
 def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = None,
-           stats_g: dict | None = None, merge: bool = False) -> ExportStats:
+           stats_g: dict | None = None, merge: bool = False,
+           quant: str | None = None) -> ExportStats:
     """Factorize each target linear.
 
     stats:   optional {gguf_base_name: input covariance H} for activation-aware truncation.
@@ -73,12 +98,19 @@ def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = N
     merge:   if True, write the reconstructed dense low-rank weight W' = U diag(s) Vt under
              the original tensor name (same size, runs on STOCK Ollama) instead of the
              factors — for measuring rank-r quality without the patched runtime.
+    quant:   optional 'q8_0' | 'q4_0' — store svd_u/svd_vt in that ggml type (svd_s stays
+             F32). Forces rank alignment to the 32-wide block so the U-side matmul (which
+             contracts over r) stays on ggml's fast quantized kernel.
     """
     reader, arch = ggufio.open_reader(infile)
     writer = gguf.GGUFWriter(outfile, arch)
     ggufio.copy_kv(reader, writer)
     n_head, n_kv = _head_meta(reader, arch)
     st = ExportStats()
+
+    qtype = _QUANT[quant] if quant else None
+    if qtype is not None and not merge:
+        policy = replace(policy, align=max(policy.align, _QUANT_BLOCK))
 
     for t in reader.tensors:
         kind = ggufio.target_kind(t.name)
@@ -123,9 +155,10 @@ def export(infile: str, outfile: str, policy: RankPolicy, stats: dict | None = N
             writer.add_tensor(t.name, np.ascontiguousarray(Wr, dtype=np.float32),
                               raw_dtype=gguf.GGMLQuantizationType.F32)
             continue
-        writer.add_tensor(base + ".svd_u", U, raw_dtype=gguf.GGMLQuantizationType.F32)
-        writer.add_tensor(base + ".svd_s", s, raw_dtype=gguf.GGMLQuantizationType.F32)
-        writer.add_tensor(base + ".svd_vt", Vt, raw_dtype=gguf.GGMLQuantizationType.F32)
+        _write_factor(writer, base + ".svd_u", U, qtype)
+        writer.add_tensor(base + ".svd_s", np.ascontiguousarray(s, dtype=np.float32),
+                          raw_dtype=gguf.GGMLQuantizationType.F32)
+        _write_factor(writer, base + ".svd_vt", Vt, qtype)
 
     writer.write_header_to_file()
     writer.write_kv_data_to_file()

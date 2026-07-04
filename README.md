@@ -103,6 +103,9 @@ arm is the obvious next run.
 - **Quality**: calibration choice spans six orders of magnitude of PPL at
   identical size; KD recovery is decisive (hybrid+KD is the only variant within
   ~6× of base PPL and recovers HellaSwag toward base).
+- **Precision**: the f32 factors above can be quantized to 8-bit for another ~2×
+  size cut and **+46–65% CPU decode** at ~free quality — a second, orthogonal axis;
+  see [Factor quantization](#factor-quantization-the-rank--precision-axis).
 
 ---
 
@@ -200,6 +203,7 @@ same-sized model gets dramatically better.
 - [Zero-data analytic whitening](#zero-data-analytic-whitening)
 - [Influence-aware two-sided whitening](#influence-aware-two-sided-whitening-data--zero-data)
 - [Performance engineering: the rank-alignment bug](#performance-engineering-the-rank-alignment-bug)
+- [Factor quantization (the rank × precision axis)](#factor-quantization-the-rank--precision-axis)
 - [Repository layout](#repository-layout)
 - [Reproducing everything](#reproducing-everything)
 - [Limitations](#limitations)
@@ -601,18 +605,69 @@ instead of one) and re-emerges on the larger Qwen. The lesson: when a llama.cpp
 perf result defies FLOP math, check kernel-dispatch bail-outs — a torch
 microbench of the same shapes is the fast falsifier.
 
+## Factor quantization (the rank × precision axis)
+
+Low-rank truncation is a *rank* lever; it leaves a second axis untouched — the
+**precision** of the factors, stored in f32 above. SVD hands us a gift for
+quantizing them: the entire heavy dynamic range is isolated in the tiny
+singular-value vector `s` (kept f32 — only *r* numbers per linear), leaving the
+**orthonormal** `U`/`Vᵀ` to quantize. Storing `U`/`Vᵀ` as ggml **Q8_0** (8.5-bit,
+32-wide blocks) roughly halves the model *again* and — because CPU decode is
+memory-bandwidth-bound — runs markedly faster, at essentially no quality cost.
+
+It needs **no runtime change**: ggml already runs *quantized-weight × f32-activation*,
+so `build_lora_mm`'s two `mul_mat`s just work; the only constraint is that the kept
+rank be a multiple of the 32-wide quant block (`RankPolicy.align` 8 → 32 — the same
+kernel-alignment class as the bug above). Select with `export.quant: q8_0 | q4_0`.
+
+SmolLM2-135M, budget 0.6×, ranks aligned to 32 (so the f32 and quantized rows share
+a rank plan — only the factor precision changes):
+
+| method | factors | size MB | GFLOPs/tok | PPL↓ | prefill t/s | decode t/s |
+|---|---|---|---|---|---|---|
+| base (dense f32) | — | 540 | 0.269 | **22.4** | 1,507 | 66.2 |
+| hybrid | f32 | 367 | 0.182 | 404 | 1,712 | 58.8 |
+| **hybrid** | **Q8_0** | **195** | 0.182 | **406** | 1,481 | **96.9** |
+| hybrid | Q4_0 | 166 | 0.182 | 545 | 1,827 | 103.8 |
+| zero-data (rand-tok) | f32 | 367 | 0.183 | 3,673 | 1,715 | 64.2 |
+| **zero-data** | **Q8_0** | **207** | 0.183 | **3,248** | 1,530 | **93.6** |
+| zero-data | Q4_0 | 180 | 0.183 | 7,593 | 1,843 | 101.1 |
+
+- **Q8_0 is a near-free ~2× win.** Size 0.53–0.56× of the f32-factor model at PPL
+  within ~0.5% (hybrid) — or slightly *better* (zero-data). Decode jumps **+46–65%**
+  over its f32 pair, and Q8_0-factored decode (96.9) is the first factored variant
+  to clearly beat the *dense base* (66.2) — quantization is what tips factored
+  decode ahead. Prefill dips ~11–13% (compute-bound; dequant overhead).
+- **GFLOPs are unchanged** — same multiply-adds, fewer bits. Quantization is a
+  **bytes / bandwidth** lever, not a FLOPs lever, which is exactly why decode
+  (bandwidth-bound) benefits and prefill (compute-bound) does not.
+- **Q4_0 is the aggressive arm and it hurts** (+35% PPL hybrid, ~2× zero-data): the
+  `svd_u` factors carry heavy output-channel outliers (excess kurtosis ≈ +9, the
+  "massive-activation" privileged basis), which 4-bit can't represent. This is the
+  practical face of a general finding — the higher-order (non-Gaussian) structure in
+  these weights is a **precision** lever, not a **rank** lever, so it pays as bits,
+  and only down to ~8 of them.
+- **Offline frontier** (activation-weighted, per matrix): at a fixed *byte* budget,
+  8-bit-higher-rank strictly beats f32-lower-rank — f32 factors are never on the
+  frontier. 8 bits is the sweet spot; below that the outliers dominate.
+
+This combination is not itself new — low-rank + quantization is established (CALDERA;
+LoRAQuant [19]; SVDq [20]). What this repo adds is running it **natively** as
+quantized factors inside Ollama/llama.cpp, and the **whitened rank-vs-precision
+frontier** as the allocation view.
+
 ## Repository layout
 
 | path | purpose |
 |------|---------|
 | `patches/svd-generic.patch` | the llama.cpp change (5 files: load hook + 2 graph ops + wiring) |
 | `svd_export.py` | GGUF post-processor: read each `W`, write `U/s/Vᵀ` (any arch; `--rank N`) |
-| `distillrank/factorize.py` | plain + whitened SVD, rank policies (align=8), break-even guard |
+| `distillrank/factorize.py` | plain + whitened SVD, rank policies (align 8, or 32 for quant), break-even guard |
 | `distillrank/calibrate.py` | data calibration: per-linear covariance hooks, HF→GGUF name map |
 | `distillrank/analytic.py` | zero-data calibration: token priors, exact layer-0 H, moment propagation, `mix_stats`, diagnostics |
 | `distillrank/planner.py` | global rank budget (binary-searched energy threshold) |
 | `distillrank/finetune/distill.py`, `distillrank/ir.py` | KD recovery on `LowRankLinear` factors |
-| `distillrank/export_gguf.py`, `distillrank/ggufio.py` | factored + merged GGUF writer (dense + MoE, RoPE permutation) |
+| `distillrank/export_gguf.py`, `distillrank/ggufio.py` | factored + merged GGUF writer (dense + MoE, RoPE permutation, Q8_0/Q4_0 factor quant) |
 | `distillrank/evaltools.py` | llama-perplexity / llama-bench wrappers (PPL, HellaSwag, Winogrande, tok/s) |
 | `distillrank/runner.py`, `distillrank/cli.py` | YAML runner; CLI: `run / plan / calibrate / calibrate-analytic / stats-diff / factorize / finetune / eval / sweep` |
 | `configs/*.yaml` | one file per experiment arm (all tables above are reproducible from these) |
@@ -643,6 +698,7 @@ python -m distillrank run configs/smollm2-randtok-budget06.yaml    # zero data
 python -m distillrank run configs/smollm2-analytic-budget06.yaml  # zero data, MC
 python -m distillrank run configs/smollm2-hybrid-budget06.yaml    # + 512 tokens
 python -m distillrank run configs/smollm2-hybrid-ft-budget06.yaml # + KD recovery
+python -m distillrank run configs/smollm2-hybrid-q8-budget06.yaml # + Q8_0 factor quant (~2x smaller, faster)
 
 # 3. diagnostics / ablation / benchmark
 python -m distillrank calibrate-analytic models/SmolLM2-135M runs/an.npz --mode random_tokens

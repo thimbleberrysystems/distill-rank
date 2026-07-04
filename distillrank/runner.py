@@ -19,14 +19,16 @@ from .export_gguf import RankPolicy, export, export_from_factors, _fmt
 
 
 def _rank_policy(base_gguf: str, spec: dict, stats: dict | None = None,
-                 stats_g: dict | None = None) -> RankPolicy:
+                 stats_g: dict | None = None, align: int = 8) -> RankPolicy:
     kind = spec.get("type", "full")
+    align = int(spec.get("align", align))
     if kind == "budget":
         from .planner import energy_for_budget
-        tau = energy_for_budget(base_gguf, float(spec["value"]), stats=stats, stats_g=stats_g)
-        print(f"[run] budget {spec['value']} -> energy threshold {tau:.4f}")
-        return RankPolicy("energy", tau)
-    return RankPolicy(kind, float(spec.get("value", 1.0)))
+        tau = energy_for_budget(base_gguf, float(spec["value"]), stats=stats,
+                                stats_g=stats_g, align=align)
+        print(f"[run] budget {spec['value']} -> energy threshold {tau:.4f} (align={align})")
+        return RankPolicy("energy", tau, align=align)
+    return RankPolicy(kind, float(spec.get("value", 1.0)), align=align)
 
 
 def _calibrate_data(model_dir: str, cal: dict) -> dict:
@@ -147,9 +149,14 @@ def run(cfg: dict) -> dict:
             np.savez_compressed(out_dir / "stats.npz", **stats)
             print(f"[run] calibrated {len(stats)} layers ({cal.get('source', 'data')})")
 
+    # optional factor quantization (svd_u/svd_vt -> ggml q8_0/q4_0). Quant forces
+    # rank alignment to the 32-wide block, so the budget search must use it too.
+    quant = cfg.get("export", {}).get("quant")
+    align = 32 if quant else 8
+
     # budget allocation uses input-whitened spectra (H); two-sided export re-uses
     # these same input-only ranks — measured better than doubly-whitened allocation.
-    policy = _rank_policy(base_gguf, rank_spec, stats)
+    policy = _rank_policy(base_gguf, rank_spec, stats, align=align)
     gguf_out = str(out_dir / "model.gguf")
 
     # --- factorize (+ optional finetune) ---
@@ -163,7 +170,7 @@ def run(cfg: dict) -> dict:
                           device=ft_spec.get("device", "auto"))
         st = export_from_factors(base_gguf, gguf_out, factors)
     else:
-        st = export(base_gguf, gguf_out, policy, stats=stats, stats_g=stats_g)
+        st = export(base_gguf, gguf_out, policy, stats=stats, stats_g=stats_g, quant=quant)
     print(_fmt(st, method))
 
     # --- eval ---

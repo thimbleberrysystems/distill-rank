@@ -1,0 +1,28 @@
+# Hybrid whitening + Q4_0 factor quantization (aggressive arm). 4.5-bit factors:
+# smallest, but the outlier-heavy svd_u factors take a real quality hit (see the
+# rank-vs-precision frontier) — Q8_0 is the near-free sweet spot; this is the
+# aggressive option. Ranks aligned to the 32-wide quant block.
+#   python -m distillrank run configs/smollm2-hybrid-q4-budget06.yaml
+name: smollm2-hybrid-q4-budget0.6
+model:
+  dir: models/SmolLM2-135M
+  base_gguf: out/smollm2-135m-base-f32.gguf
+method: activation_aware
+rank:
+  type: budget
+  value: 0.6
+calibration:
+  source: hybrid
+  lambda: 0.5
+  mode: mc
+  prior: merge_rank
+  samples: 16384
+  seqlen: 256
+  text: data/eval/wiki.test.raw
+  seqs: 2
+export:
+  quant: q4_0
+eval:
+  ppl: data/eval/wiki.micro.raw
+  ctx: 256
+  speed: true

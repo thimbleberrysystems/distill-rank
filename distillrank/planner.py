@@ -53,28 +53,29 @@ def _collect_spectra(base_gguf: str, stats: dict | None = None, stats_g: dict | 
     return spectra, orig
 
 
-def _params_at(spectra, orig, tau: float) -> float:
+def _params_at(spectra, orig, tau: float, align: int = 8) -> float:
     """Parameter ratio if every matrix keeps energy fraction τ (break-even guarded)."""
     total = 0
     for out, in_, s in spectra:
         energy = np.cumsum(s.astype(np.float64) ** 2)
         r = int(np.searchsorted(energy / energy[-1], tau) + 1)
         r = max(1, min(r, min(out, in_)))
-        r = min(-(-r // 8) * 8, min(out, in_))     # match RankPolicy.align=8
+        r = min(-(-r // align) * align, min(out, in_))   # match RankPolicy.align
         total += (out * r + r + r * in_) if saves_params(r, out, in_) else out * in_
     return total / max(orig, 1)
 
 
 def energy_for_budget(base_gguf: str, target_ratio: float, stats: dict | None = None,
-                      stats_g: dict | None = None, tol: float = 0.01) -> float:
+                      stats_g: dict | None = None, tol: float = 0.01, align: int = 8) -> float:
     """Binary-search the energy threshold τ whose param ratio ≈ target_ratio.
     Pass the same covariances (stats=H, stats_g=G) used for export so the
-    threshold matches the (possibly doubly-)whitened spectrum it will truncate."""
+    threshold matches the (possibly doubly-)whitened spectrum it will truncate.
+    `align` must match RankPolicy.align (32 when factors are quantized)."""
     spectra, orig = _collect_spectra(base_gguf, stats, stats_g)
     lo, hi = 0.0, 1.0
     for _ in range(24):
         mid = (lo + hi) / 2
-        ratio = _params_at(spectra, orig, mid)
+        ratio = _params_at(spectra, orig, mid, align)
         if abs(ratio - target_ratio) < tol:
             return mid
         if ratio < target_ratio:   # too aggressive -> raise τ
