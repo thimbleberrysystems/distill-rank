@@ -523,10 +523,17 @@ cleanly only with KD recovery (or a gentler budget).
 
 | variant | calib | size MB | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
 |---|---|---|---|---|---|---|---|
-| **base (uncompressed)** | — | 1,982 | **19.0** | **51.0** | **57.0** | 653 | 25.8 |
-| random-token prior | 0 | 1,409 | 741 | 26.8 | 50.0 | 875 | 31.8 |
-| data 2-seq | 512 | 1,418 | 836 | 27.2 | 56.0 | 883 | 31.2 |
-| **hybrid** | 512 | 1,405 | **213** | 26.5 | 49.5 | **898** | **32.0** |
+| **base (uncompressed)** | — | 1,982 | **19.0** | **51.0** | **57.0** | 669 | 25.3 |
+| random-token prior | 0 | 1,409 | 741 | 26.8 | 50.0 | 867 | 31.0 |
+| **zero-data IO-SVD** | 0 | 1,409 | **651** | 27.5 | 53.5 | 916 | 31.9 |
+| data 2-seq | 512 | 1,418 | 836 | 27.2 | **56.0** | 887 | 30.9 |
+| **data IO-SVD (2-sided)** | 4k | 1,421 | **530** | 25.0 | 51.5 | 885 | 31.6 |
+| **hybrid** | 512 | 1,405 | **213** | 26.5 | 49.5 | 908 | 31.8 |
+
+On Qwen the two-sided arms again beat their input-only pairs: zero-data IO-SVD
+651 < random-token 741 (and higher HellaSwag/Winogrande), data IO-SVD 530 <
+data-2seq 836. Hybrid input-only (213) remains best here — a Qwen hybrid+Fisher
+arm is the obvious next run.
 
 Reading the tradeoff:
 
