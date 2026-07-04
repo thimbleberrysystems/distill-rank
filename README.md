@@ -426,17 +426,37 @@ pairs isolate the two-sided effect:
 Two takeaways: the output-influence signal is worth a large quality gain at equal
 size, and — the striking one — **zero-data two-sided (1,888) beats data-based
 input-only whitening (3,672)**: a well-chosen *metric* with no data outperforms
-real activation statistics without it. (The strongest input-only arm, hybrid at
-PPL 427, uses a richer analytic+512-token calibration; combining hybrid input
-whitening with the Fisher output side is the natural next step.) Size, speed and
-task-accuracy for these arms are in [Full benchmarks](#full-benchmarks) — they
-match their input-only pairs on size/throughput (the gain is pure quality), and
-at this 0.6× budget HellaSwag/Winogrande sit near chance for all compressed
-variants, so PPL is the discriminating metric here.
+real activation statistics without it. Replicated on Qwen2.5-0.5B (base PPL 19):
+zero-data two-sided **651** vs zero-data input-only (random-token) 741.
+
+**Can it beat the best input-only method?** The strongest non-finetuned arm is
+hybrid input whitening (PPL 427). Pairing it with the Fisher output side —
+`hybrid_priorfisher`, hybrid input H + a **zero-data** prior Fisher G — reaches
+**419**, edging past it. The margin is small, but it shows the output-Fisher term
+adds signal on top of the best input whitening. The catch is a **data
+requirement on G**: a first attempt using the hybrid's own tiny 2-sequence data
+for G (512 tokens) scored **5,390** — *worse* than hybrid — because a
+[1536×1536] gradient covariance is hopelessly rank-deficient at 512 tokens. The
+prior route sidesteps this: G is estimated from 16k prior-sampled tokens for
+free, so it is well-conditioned. (hybrid + KD finetune, PPL 129, still wins
+overall — KD recovery dominates any calibration refinement.)
+
+| method | input side | output side (Fisher) | PPL |
+|---|---|---|---|
+| hybrid | analytic+512tok | — | 427 |
+| hybrid + 2-seq-data Fisher | analytic+512tok | 512 tokens (noisy) | 5,390 |
+| **hybrid + prior Fisher** | analytic+512tok | 16k prior (zero-data) | **419** |
+
+Size, speed and task-accuracy for all arms are in
+[Full benchmarks](#full-benchmarks); two-sided matches its input-only pairs on
+size/throughput (the gain is pure quality), and at this 0.6× budget
+HellaSwag/Winogrande sit near chance for every compressed variant, so PPL is the
+discriminating metric here.
 
 ```bash
-python -m distillrank run configs/smollm2-influence.yaml    # data IO-SVD
-python -m distillrank run configs/smollm2-zerofisher.yaml   # zero-data (novel)
+python -m distillrank run configs/smollm2-influence.yaml        # data IO-SVD
+python -m distillrank run configs/smollm2-zerofisher.yaml       # zero-data (novel)
+python -m distillrank run configs/smollm2-hybridpriorfisher.yaml # hybrid input + zero-data Fisher
 ```
 
 ## Performance engineering: the rank-alignment bug
