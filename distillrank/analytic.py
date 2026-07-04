@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .calibrate import attach_cov_hooks, gguf_name
+from .calibrate import attach_cov_hooks, gguf_name, _wants_output_cov
 
 
 # --- token priors -------------------------------------------------------------
@@ -208,7 +208,7 @@ def collect_influence_prior(model_dir: str, *, prior: str = "merge_rank",
     for name, mod in model.named_modules():
         if isinstance(mod, torch.nn.Linear):
             gn = gguf_name(name)
-            if gn is not None and gn != "output":   # lm_head G is [vocab,vocab]: skip
+            if gn is not None and _wants_output_cov(gn):
                 bwd.append(mod.register_full_backward_hook(make_bhook(gn)))
 
     for i in range(n):

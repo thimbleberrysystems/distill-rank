@@ -36,7 +36,11 @@ class ExportStats:
 def _factor_2d(W: np.ndarray, policy: RankPolicy, st: ExportStats, name: str, H=None, G=None):
     out, in_ = W.shape
     if H is not None and G is not None:     # two-sided (Fisher-weighted, IO-SVD)
-        U, s, Vt, err = two_sided_whiten_svd(W, H, G, policy)
+        # Allocate rank from the INPUT-whitened spectrum (measured better than the
+        # doubly-whitened allocation), then factorize two-sided at that fixed rank.
+        from .planner import _svdvals
+        r = policy.choose(_svdvals(W, H), out, in_)
+        U, s, Vt, err = two_sided_whiten_svd(W, H, G, RankPolicy("fixed", r, align=policy.align))
     elif H is not None:                     # activation-aware (input only)
         U, s, Vt, err = whiten_svd(W, H, policy)
     else:                                   # plain SVD (single, torch-backed)

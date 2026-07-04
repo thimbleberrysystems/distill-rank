@@ -112,7 +112,9 @@ def run(cfg: dict) -> dict:
             np.savez_compressed(out_dir / "stats.npz", **stats)
             print(f"[run] calibrated {len(stats)} layers ({cal.get('source', 'data')})")
 
-    policy = _rank_policy(base_gguf, rank_spec, stats, stats_g)
+    # budget allocation uses input-whitened spectra (H); two-sided export re-uses
+    # these same input-only ranks — measured better than doubly-whitened allocation.
+    policy = _rank_policy(base_gguf, rank_spec, stats)
     gguf_out = str(out_dir / "model.gguf")
 
     # --- factorize (+ optional finetune) ---

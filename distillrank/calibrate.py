@@ -40,6 +40,19 @@ def gguf_name(module_name: str) -> str | None:
     return None
 
 
+def _wants_output_cov(gname: str) -> bool:
+    """Which linears get an output-side covariance G for two-sided whitening.
+
+    Only matrices whose output feeds ~linearly into the residual stream, where
+    the Gauss-Newton/Fisher approximation behind IO-SVD holds: attn_v, attn_output,
+    ffn_gate/up/down. Excluded: attn_q/k/qkv (their outputs go through the softmax
+    attention scores — a strongly nonlinear path where two-sided *hurts*, measured
+    ~2.7× worse PPL) and output/lm_head (its G is [vocab,vocab] — intractable and
+    rank-deficient)."""
+    return not (gname.endswith("attn_q") or gname.endswith("attn_k")
+                or gname.endswith("attn_qkv") or gname == "output")
+
+
 def attach_cov_hooks(model) -> tuple[dict, list]:
     """Register H += xᵀx forward hooks on every target Linear.
 
@@ -99,7 +112,7 @@ def collect_influence(model_dir: str, texts: list[str], tokenizer, *,
     for name, mod in model.named_modules():
         if isinstance(mod, torch.nn.Linear):
             gname = gguf_name(name)
-            if gname is not None and gname != "output":   # lm_head G is [vocab,vocab]: skip
+            if gname is not None and _wants_output_cov(gname):
                 bwd.append(mod.register_full_backward_hook(make_bhook(gname)))
 
     ids = tokenizer("\n\n".join(texts), return_tensors="pt").input_ids[0]
