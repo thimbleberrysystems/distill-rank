@@ -33,6 +33,10 @@ MANIFEST = {
         ("data 24-seq (Phase-2)", "runs/smollm2-budget0.6/model.gguf", "12k tokens"),
         ("hybrid (analytic+512tok)", "runs/smollm2-hybrid-budget0.6/model.gguf", "512 tokens"),
         ("hybrid + KD finetune", "runs/smollm2-hybrid-ft-budget0.6/model.gguf", "512 tok + KD"),
+        # two-sided (IO-SVD) arms — matched-calibration pairs isolate the influence effect
+        ("input-only (data 8-seq)", "runs/smollm2-inputonly8/model.gguf", "4k tokens"),
+        ("data IO-SVD (two-sided)", "runs/smollm2-influence-budget0.6/model.gguf", "4k tokens"),
+        ("zero-data IO-SVD (novel)", "runs/smollm2-zerofisher-budget0.6/model.gguf", "0 tokens"),
     ],
     "qwen": [
         ("base (f32, uncompressed)", "out/qwen2.5-0.5b-base-f32.gguf", "—"),
