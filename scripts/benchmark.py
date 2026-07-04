@@ -37,11 +37,14 @@ MANIFEST = {
         ("input-only (data 8-seq)", "runs/smollm2-inputonly8/model.gguf", "4k tokens"),
         ("data IO-SVD (two-sided)", "runs/smollm2-influence-budget0.6/model.gguf", "4k tokens"),
         ("zero-data IO-SVD (novel)", "runs/smollm2-zerofisher-budget0.6/model.gguf", "0 tokens"),
+        ("hybrid + prior-Fisher (novel)", "runs/smollm2-hybridpriorfisher-budget0.6/model.gguf", "512 tokens"),
     ],
     "qwen": [
         ("base (f32, uncompressed)", "out/qwen2.5-0.5b-base-f32.gguf", "—"),
         ("random-token prior", "runs/qwen05-randtok-budget0.6/model.gguf", "0 tokens"),
+        ("zero-data IO-SVD (novel)", "runs/qwen05-zerofisher-budget0.6/model.gguf", "0 tokens"),
         ("data 2-seq", "runs/qwen05-data2-budget0.6/model.gguf", "512 tokens"),
+        ("data IO-SVD (two-sided)", "runs/qwen05-influence-budget0.6/model.gguf", "4k tokens"),
         ("hybrid (analytic+512tok)", "runs/qwen05-hybrid-budget0.6/model.gguf", "512 tokens"),
     ],
 }
