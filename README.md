@@ -31,7 +31,7 @@ SVD at all:
 
 | dense quantization (no SVD) | size MB | PPL↓ |
 |---|---|---|
-| base f32 (uncompressed) | 540 | 22.4 |
+| base — f32, upcast from bf16 (see note) | 540 | 22.4 |
 | **Q8_0** | **145** | **22.5** |
 | Q6_K | 138 | 22.8 |
 | Q5_K_M | 112 | 23.2 |
@@ -45,6 +45,18 @@ point (red) — even the best, hybrid + KD at PPL 129 — sits far above it: lar
 *and* worse. **For models this size, low-rank SVD is the wrong primary tool for
 weight compression; quantization is the right one.** We report that plainly rather
 than bury it.
+
+> **A note on the "f32" baseline — read this before comparing sizes.** The 540 MB
+> `base f32` is a *deliberate lossless reference for the SVD experiments*, not a
+> deployment format. `convert_hf_to_gguf.py --outtype f32` **upcasts the bf16
+> HuggingFace release to f32**, doubling the bytes with no gain in real precision
+> (the content is still bf16). It is **not** how anyone ships a model, and **not**
+> an Ollama default: Ollama serves *quantized* models (the library ships Q4_K_M,
+> ~4-bit, by default). So the genuine deployment reference is the quantization
+> frontier itself — which is exactly why it is the baseline this repo has to beat.
+> Every method here is measured against the same f32 file, so relative comparisons
+> hold; if anything the f32 framing is *generous* to low-rank, since the true
+> uncompressed content is already only bf16.
 
 <p align="center">
   <img src="docs/levers.svg" alt="Two ways to shrink a weight matrix: precision (fewer bits per number, the strong cheap lever) and rank (fewer directions via SVD, the weak lever that loses to quantization on these models)." width="920">
@@ -94,7 +106,7 @@ the GGUF tensor shapes (block projections + the tied LM head, dense or
 identical across variants. It measures the *compute* cut, next to `size MB`'s
 *memory* cut.
 
-**SmolLM2-135M** (f32, 540 MB → ~370 MB):
+**SmolLM2-135M** (f32 baseline, upcast from bf16, 540 MB → ~370 MB):
 
 | variant | calib | size MB | GFLOPs/tok↓ | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
 |---|---|---|---|---|---|---|---|---|
@@ -123,7 +135,7 @@ cleanly only with KD recovery (or a gentler budget). (The pure-data rows are
 noisy — *24* seqs scoring worse than *2* is small-sample rank-allocation
 variance, exactly what the hybrid's shrinkage prior repairs.)
 
-**Qwen2.5-0.5B** (f32, 1,982 MB → ~1,410 MB):
+**Qwen2.5-0.5B** (f32 baseline, upcast from bf16, 1,982 MB → ~1,410 MB):
 
 | variant | calib | size MB | GFLOPs/tok↓ | PPL↓ | HellaSwag↑ | Winogrande↑ | prefill t/s | decode t/s |
 |---|---|---|---|---|---|---|---|---|
