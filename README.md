@@ -58,6 +58,23 @@ than bury it.
 > hold; if anything the f32 framing is *generous* to low-rank, since the true
 > uncompressed content is already only bf16.
 
+**We tested the one place low-rank might still win — and it doesn't.** The only
+regime where low-rank + quantization could earn its keep is *below* the ~88 MB
+dense-quant floor (sizes dense quant alone can't reach). It fails there too:
+
+| smallest-model attempt | size MB | PPL↓ |
+|---|---|---|
+| dense Q2_K (the floor) | 88 | 32 |
+| best low-rank (hybrid+KD) quantized | 252 | 132 |
+| aggressive low-rank (0.4× budget) + quant | 202 | **1,844** |
+
+Even the best low-rank arm, quantized, is 3× larger *and* 4× worse than dense
+Q2_K; pushing the rank budget to 0.4× to reach smaller sizes collapses quality to
+PPL ≈ 1,840. **There is no crossover — quantization dominates at every size.** (We
+could not extend the dense curve below 88 MB — sub-2-bit IQ quants need an
+importance matrix this build won't synthesize on the fly — but low-rank produces
+nothing usable down there regardless, so the verdict stands.)
+
 <p align="center">
   <img src="docs/levers.svg" alt="Two ways to shrink a weight matrix: precision (fewer bits per number, the strong cheap lever) and rank (fewer directions via SVD, the weak lever that loses to quantization on these models)." width="920">
 </p>
@@ -842,9 +859,12 @@ patch (Ollama compat patches don't link standalone).
   CPU-constrained (200 steps). Low-rank tends to fare relatively better on larger
   models (bigger matrices, more exploitable structure), so the verdict above is
   scoped to small models — the crossover at larger scale is unverified here.
-- **The crossover regime is untested.** Low-rank + quantization can reach sizes
-  *below* the ~88 MB dense-quant floor (sub-2-bit-equivalent); whether it beats
-  aggressive dense low-bit quant there, at usable quality, is not measured.
+- **The crossover regime is now tested — still no win.** Low-rank + quantization
+  can reach sizes below the ~88 MB dense-quant floor, but only at unusable quality
+  (PPL ~1,840 at 0.4× budget), and even the best low-rank arm (hybrid+KD) quantized
+  is dominated by dense Q2_K. One gap: sub-2-bit dense IQ quants need an importance
+  matrix this build won't synthesize, so the dense curve below 88 MB is unmeasured —
+  but low-rank offers nothing usable there, so it doesn't change the verdict.
 - **Evaluation**: perplexity is wikitext-only; HellaSwag/Winogrande at 400
   tasks have meaningful variance; single seeds throughout.
 - **Novelty is claimed as of 2026-07** based on literature search, scoped in
