@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect x="0.5" y="0.5" width="959" height="299" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="28" y="34" fill="#0f172a" font-size="17" font-weight="700">Zero-data calibration: get the whitening H from the model itself</text>
+  <text x="28" y="54" fill="#64748b" font-size="12.5">whitening needs H = Σ xxᵀ, normally measured by running calibration text. This repo derives it with none.</text>
+
+  <!-- flow boxes -->
+  <g>
+    <rect x="28"  y="86" width="200" height="86" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="128" y="118" fill="#1d4ed8" font-size="13.5" font-weight="700" text-anchor="middle">tokenizer.json</text>
+    <text x="128" y="139" fill="#3b82f6" font-size="11.5" text-anchor="middle">the BPE merge list is</text>
+    <text x="128" y="154" fill="#3b82f6" font-size="11.5" text-anchor="middle">stored in frequency order</text>
+
+    <rect x="268" y="86" width="200" height="86" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="368" y="114" fill="#1d4ed8" font-size="13.5" font-weight="700" text-anchor="middle">merge-rank prior</text>
+    <text x="368" y="136" fill="#3b82f6" font-size="11.5" text-anchor="middle">p(token) ∝ 1/(rank+r₀)</text>
+    <text x="368" y="152" fill="#3b82f6" font-size="11.5" text-anchor="middle">a corpus-frequency estimate</text>
+
+    <rect x="508" y="86" width="200" height="86" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="608" y="114" fill="#0f172a" font-size="13.5" font-weight="700" text-anchor="middle">sample token ids</text>
+    <text x="608" y="136" fill="#475569" font-size="11.5" text-anchor="middle">→ real embedding rows</text>
+    <text x="608" y="152" fill="#475569" font-size="11.5" text-anchor="middle">through the real layers</text>
+
+    <rect x="748" y="86" width="184" height="86" rx="12" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="840" y="118" fill="#166534" font-size="13.5" font-weight="700" text-anchor="middle">H — no data</text>
+    <text x="840" y="139" fill="#15803d" font-size="11.5" text-anchor="middle">feeds the same</text>
+    <text x="840" y="154" fill="#15803d" font-size="11.5" text-anchor="middle">whitening pipeline</text>
+  </g>
+  <g stroke="#93c5fd" stroke-width="2" fill="none">
+    <path d="M228 129 L268 129" marker-end="url(#b)"/>
+    <path d="M468 129 L508 129" marker-end="url(#b)"/>
+    <path d="M708 129 L748 129" marker-end="url(#b)"/>
+  </g>
+
+  <rect x="28" y="196" width="904" height="78" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="480" y="222" fill="#0f172a" font-size="13" font-weight="600" text-anchor="middle">Why it works: random token ids still push REAL embedding vectors through the model — real geometry, random content.</text>
+  <text x="480" y="244" fill="#475569" font-size="12" text-anchor="middle">Zero-data whitening lands ~4 orders of magnitude below plain SVD. A pinch of real text mixed in (hybrid) does better still.</text>
+  <text x="480" y="263" fill="#b91c1c" font-size="12" text-anchor="middle">Negative control: random NOISE (no embeddings) is worse than no whitening at all — whitening needs real directions, not just randomness.</text>
+
+  <defs><marker id="b" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#93c5fd"/></marker></defs>
+</svg>

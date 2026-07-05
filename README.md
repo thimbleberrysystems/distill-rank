@@ -1,10 +1,11 @@
 # distill-rank
 
-**Make a language model smaller by rewriting each of its weight matrices as a
-low-rank product — and then actually *run* it in that compressed form inside
-Ollama/llama.cpp. The headline trick: figure out how to compress well using
-*no calibration data at all*, by reading what matters straight out of the
-model's own weights and tokenizer.**
+**A research log on making LLM weights smaller. It builds a low-rank SVD
+compression pipeline that runs natively as factors inside Ollama/llama.cpp, and
+contributes a genuinely new *zero-data* calibration method. It also reports,
+honestly, the punchline for the goal "smallest model at best quality": plain
+quantization beats low-rank outright on these models. The negative results are
+part of the point — this is a map of what works, what doesn't, and why.**
 
 <p align="center">
   <img src="docs/overview.svg" alt="Pipeline: a model's weight matrices are factored into U·s·Vᵀ, the rank is trimmed to shrink them, the factors are stored in a GGUF file, and a patched Ollama runs the factors natively; calibration chooses what to keep and an optional KD finetune recovers quality." width="940">
@@ -18,20 +19,71 @@ model's own weights and tokenizer.**
 
 ---
 
-## Results at a glance
+## The honest headline: quantization wins
 
-Every row below is the **same model at the same size** — only the *calibration*
-(how we decide which parts to keep) changes. It moves quality across **six orders
-of magnitude of perplexity**. Lower perplexity = better.
+The goal is the **smallest file at the best quality.** Measured on one model
+(SmolLM2-135M) against the strong baseline — quantizing the *dense* weights, no
+SVD at all:
+
+<p align="center">
+  <img src="docs/frontier.svg" alt="Size-vs-perplexity scatter: the dense quantization frontier (green) runs from 145 MB at PPL 22.5 down to 88 MB at PPL 32, while every low-rank point (red) — including hybrid+KD at 370 MB PPL 129 — sits far above it, larger and worse." width="940">
+</p>
+
+| dense quantization (no SVD) | size MB | PPL↓ |
+|---|---|---|
+| base f32 (uncompressed) | 540 | 22.4 |
+| **Q8_0** | **145** | **22.5** |
+| Q6_K | 138 | 22.8 |
+| Q5_K_M | 112 | 23.2 |
+| Q4_K_M | 105 | 23.8 |
+| Q3_K_M | 94 | 28.1 |
+| Q2_K | 88 | 32.0 |
+
+The quantization frontier (green) dominates: 8-bit is 145 MB at essentially base
+quality (22.5 vs 22.4), degrading gracefully to 88 MB at PPL 32. Every low-rank
+point (red) — even the best, hybrid + KD at PPL 129 — sits far above it: larger
+*and* worse. **For models this size, low-rank SVD is the wrong primary tool for
+weight compression; quantization is the right one.** We report that plainly rather
+than bury it.
+
+<p align="center">
+  <img src="docs/levers.svg" alt="Two ways to shrink a weight matrix: precision (fewer bits per number, the strong cheap lever) and rank (fewer directions via SVD, the weak lever that loses to quantization on these models)." width="920">
+</p>
+
+Two orthogonal axes shrink a weight — **precision** (bits per number) and **rank**
+(how many numbers). This repo is mostly about the *rank* axis; the honest finding
+is that *precision* is the strong axis, and the two only combine usefully at
+extreme sizes (below the ~88 MB quantization floor), where quality is already poor.
+
+### So what is worth keeping here
+
+Three things survive that verdict and stand on their own:
+
+1. **A genuinely new zero-data / hybrid calibration** — compress low-rank *well*
+   with no calibration text, by reading the statistics out of the model's own
+   tokenizer. Useful wherever low-rank factors are the right representation
+   (adapters, delta weights, KV cache), independent of the verdict for full weights.
+2. **A native factored-execution runtime** — factors run inside stock Ollama, and
+   *quantized* factors decode faster than the dense base.
+3. **A thorough, measured map of what does and doesn't work** — six probed dead
+   ends and the one principle that explains them all.
+
+The rest is the research log behind those three.
+
+## The low-rank results (for the record)
+
+The pipeline does real low-rank compression, and how far *calibration* moves
+quality at a fixed low-rank budget is the interesting research question. Same
+model, same 0.60× rank budget — only *how we pick what to keep* changes:
 
 <p align="center">
   <img src="docs/variants.svg" alt="Horizontal bar chart of perplexity (log scale) for SmolLM2-135M at 0.60x size: plain SVD 82 million, analytic 65,041, random-token prior 4,045 (best zero-data), activation-aware 2,554, hybrid 427, hybrid+KD 129 (best overall); the original uncompressed model is 22." width="900">
 </p>
 
-**Headline (SmolLM2-135M, 0.60× budget, CPU):** plain data-free SVD ≈ 8×10⁷ →
-zero-data whitening 4,045 → hybrid (512 calibration tokens) 427 → hybrid + 200
-KD steps **129** — while running **faster than the uncompressed model** at both
-prefill and decode.
+**At 0.60× rank budget:** plain data-free SVD ≈ 8×10⁷ → zero-data whitening 4,045 →
+hybrid (512 calibration tokens) 427 → hybrid + 200 KD steps **129**. Six orders of
+magnitude from calibration alone — a real, interesting result about *calibration* —
+but, per the frontier above, still short of dense 8-bit's 22.5 at a larger size.
 
 All variants below exported with aligned ranks at global budget 0.6× via one
 harness (`scripts/benchmark.py`, sequential runs). PPL on wikitext (ctx 256);
@@ -203,6 +255,7 @@ same-sized model gets dramatically better.
 - [Zero-data analytic whitening](#zero-data-analytic-whitening)
 - [Influence-aware two-sided whitening](#influence-aware-two-sided-whitening-data--zero-data)
 - [Performance engineering: the rank-alignment bug](#performance-engineering-the-rank-alignment-bug)
+- [What we ruled out (the exploration)](#what-we-ruled-out-the-exploration)
 - [Factor quantization (the rank × precision axis)](#factor-quantization-the-rank--precision-axis)
 - [Repository layout](#repository-layout)
 - [Reproducing everything](#reproducing-everything)
@@ -375,6 +428,13 @@ deliberately skipped (not plain linear projections).
 [activation-aware] [+ finetune] → export GGUF → evaluate**, one YAML per run,
 artifacts under `runs/<name>/{stats.npz, model.gguf, results.json}`.
 
+The one idea that makes low-rank truncation usable at all is *whitening* —
+truncating in the metric of real activations instead of raw weight magnitude:
+
+<p align="center">
+  <img src="docs/whitening.svg" alt="Plain SVD drops the smallest-magnitude directions of W (minimize ||W-Wr||) and is catastrophic at PPL 8e7; activation-aware whitening measures which input directions real text excites (H) and drops what activations barely touch (minimize ||(W-Wr)X||), repairing ~5 orders of magnitude to PPL 2554. Only the metric changes." width="900">
+</p>
+
 ### Methods
 
 - **Rank policies** (`factorize.RankPolicy`): `full` | `fixed` | `frac` |
@@ -411,8 +471,12 @@ with zero calibration data? Motivation: calibration data is a real deployment
 constraint (private domains, licensing, no representative text), the field only
 *reduces* it [8], and — as the results above show — whitening is worth 4–6 orders
 of magnitude of perplexity, so its data dependence matters. The
-[Results-at-a-glance chart](#results-at-a-glance) is exactly this question:
+[calibration chart](#the-low-rank-results-for-the-record) is exactly this question:
 each branch is a different source for the whitening covariance `H`.
+
+<p align="center">
+  <img src="docs/zerodata.svg" alt="Zero-data calibration flow: the BPE merge list in tokenizer.json is frequency-ordered, giving a merge-rank prior p(token) ∝ 1/(rank+r0); sampling token ids from it pushes real embedding rows through the real layers to produce H with no calibration data. Random noise (no embeddings) is worse than no whitening — whitening needs real directions." width="920">
+</p>
 
 All these estimators emit the same `{gguf_name: H}` dict the rest of the
 pipeline consumes; nothing downstream changes. Selected per run by
@@ -568,7 +632,7 @@ overall — KD recovery dominates any calibration refinement.)
 | **hybrid + prior Fisher** | analytic+512tok | 16k prior (zero-data) | **419** |
 
 Size, speed and task-accuracy for all arms are in the
-[Results-at-a-glance tables](#results-at-a-glance); two-sided matches its
+[low-rank results tables](#the-low-rank-results-for-the-record); two-sided matches its
 input-only pairs on size/throughput (the gain is pure quality).
 
 ```bash
@@ -604,6 +668,47 @@ Single-thread decode (+46%) tracks the 0.59× byte ratio; at 24 threads on a
 instead of one) and re-emerges on the larger Qwen. The lesson: when a llama.cpp
 perf result defies FLOP math, check kernel-dispatch bail-outs — a torch
 microbench of the same shapes is the fast falsifier.
+
+## What we ruled out (the exploration)
+
+Before pivoting to quantization we tried, in earnest, to make the *rank* axis
+competitive — to find some structure in the weights that a cleverer decomposition
+could exploit beyond plain whitened SVD. Five ideas, each killed by a quick
+read-only measurement rather than argument:
+
+<p align="center">
+  <img src="docs/deadends.svg" alt="Two panels. Measured out: Gavish-Donoho (signal+noise model, weights heavy-tailed), residual routing / shared basis (no free structure), frequency/wavelet/time-frequency (weights are white, 2D-FFT low band 0.010), higher-order ICA/dictionary/tensor/sparse (structure exists but is magnitude not rank), centered whitening + bias (whitening already absorbs the mean). What works: activation-aware/Fisher whitening, zero-data/hybrid calibration, KD recovery, and quantization." width="940">
+</p>
+
+- **Gavish–Donoho optimal threshold** [arXiv:1305.5870] — a principled rank rule,
+  but it assumes signal + Gaussian noise; LLM spectra are heavy-tailed
+  (Martin–Mahoney [arXiv:1810.01075]), so raw G-D collapses the FFN to rank ~4
+  (catastrophic) and even whitened G-D is a rigid one-point rule with no quality knob.
+- **Residual routing / shared basis** — relocating the discarded residual into a
+  neighbour (fused QKV, etc.). Looked like a 2–12× win versus the naive per-matrix
+  baseline, but versus a *fair* globally-optimal rank allocation it is break-even
+  (ratio 0.93–1.12) — the "win" was just the naive baseline mean-collapsing q/k.
+- **Frequency / wavelet / time-frequency transforms** — weight matrices have no
+  ordered axis, so fixed transforms see white noise: a 2D-FFT concentrates 0.010
+  of the energy in its low band (uniform is 0.010; SVD's adaptive basis gets 0.26).
+  The depth axis is near-white too. Time-frequency's valid home is the KV-cache
+  sequence axis, not weights.
+- **Higher-order decompositions** (ICA, dictionary/K-SVD, tensor-CP, sparse+low-rank)
+  — motivated because heavy tails are non-Gaussian structure SVD can't see. The
+  structure is real (the `svd_u` factors have excess kurtosis ≈ +9), but it is
+  *magnitude concentration* on output channels, not exact sparsity: sparse+low-rank
+  and sparse-`U` both come out at parity with a random matrix. It is a **precision**
+  lever, not a rank one — which is exactly why quantization is the productive move.
+- **Centered whitening + mean bias** — the one idea that measured a *positive*
+  (if small) gain: factor the mean out into an exact bias so the rank budget isn't
+  spent reproducing the 57%-energy mean direction. Real but modest, concentrated at
+  aggressive ranks (rank ≤ 2); left as a documented follow-up.
+
+**The unifying principle:** heavy-tailed, high-rank weight spectra offer no
+structural shortcut. Plain whitened SVD already extracts the entire second-order
+structure; what is left over is heavy-tailed *magnitude*, which reduces **bits**
+(quantization), not **rank**. That is the through-line from every dead end above to
+the section below.
 
 ## Factor quantization (the rank × precision axis)
 
@@ -715,18 +820,23 @@ patch (Ollama compat patches don't link standalone).
 
 ## Limitations
 
+- **Low-rank loses to quantization here — stated up front.** For the goal
+  "smallest model at best quality" on these models, dense quantization dominates
+  every low-rank result (see [the honest headline](#the-honest-headline-quantization-wins)).
+  The value of this repo is the *calibration research*, the *native runtime*, and
+  the *negative-results map* — not a claim that low-rank is a good weight compressor
+  at this scale.
 - **Scale**: validated on 135M–0.5B models on one CPU box; the KD numbers are
-  CPU-constrained (200 steps). Larger models and GPU finetuning should close
-  more of the quality gap, but that is unverified here.
+  CPU-constrained (200 steps). Low-rank tends to fare relatively better on larger
+  models (bigger matrices, more exploitable structure), so the verdict above is
+  scoped to small models — the crossover at larger scale is unverified here.
+- **The crossover regime is untested.** Low-rank + quantization can reach sizes
+  *below* the ~88 MB dense-quant floor (sub-2-bit-equivalent); whether it beats
+  aggressive dense low-bit quant there, at usable quality, is not measured.
 - **Evaluation**: perplexity is wikitext-only; HellaSwag/Winogrande at 400
   tasks have meaningful variance; single seeds throughout.
-- **At 0.6× budget the compressed models are far from base quality** (129 vs
-  22.4 PPL) — the contribution is the *calibration-data* axis and the runtime,
-  not a state-of-the-art compression ratio claim.
 - **Novelty is claimed as of 2026-07** based on literature search, scoped in
   [Original contributions](#original-contributions).
-- f32 only; quantizing the factors (and how quantization interacts with
-  orthogonality and the spectrum) is future work.
 
 ## References
 

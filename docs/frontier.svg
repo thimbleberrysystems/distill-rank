@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 430" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<rect x="0.5" y="0.5" width="979" height="429" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="28" y="34" fill="#0f172a" font-size="17" font-weight="700">Smallest model at best quality: quantization vs low-rank (SmolLM2-135M)</text>
+<text x="28" y="54" fill="#64748b" font-size="12.5">perplexity (log, lower better) vs file size · lower-left is better · every low-rank point sits far above the quantization frontier</text>
+<line x1="135" y1="360" x2="915" y2="360" stroke="#cbd5e1" stroke-width="1.5"/>
+<line x1="135" y1="360" x2="135" y2="64" stroke="#cbd5e1" stroke-width="1.5"/>
+<line x1="168" y1="360" x2="168" y2="365" stroke="#cbd5e1"/><text x="168" y="380" fill="#94a3b8" font-size="11" text-anchor="middle">100</text>
+<line x1="330" y1="360" x2="330" y2="365" stroke="#cbd5e1"/><text x="330" y="380" fill="#94a3b8" font-size="11" text-anchor="middle">200</text>
+<line x1="492" y1="360" x2="492" y2="365" stroke="#cbd5e1"/><text x="492" y="380" fill="#94a3b8" font-size="11" text-anchor="middle">300</text>
+<line x1="655" y1="360" x2="655" y2="365" stroke="#cbd5e1"/><text x="655" y="380" fill="#94a3b8" font-size="11" text-anchor="middle">400</text>
+<line x1="818" y1="360" x2="818" y2="365" stroke="#cbd5e1"/><text x="818" y="380" fill="#94a3b8" font-size="11" text-anchor="middle">500</text>
+<text x="525" y="398" fill="#64748b" font-size="12" text-anchor="middle">file size (MB)</text>
+<line x1="130" y1="360" x2="135" y2="360" stroke="#cbd5e1"/><text x="126" y="364" fill="#94a3b8" font-size="11" text-anchor="end">20</text>
+<line x1="130" y1="325" x2="135" y2="325" stroke="#cbd5e1"/><text x="126" y="329" fill="#94a3b8" font-size="11" text-anchor="end">30</text>
+<line x1="130" y1="282" x2="135" y2="282" stroke="#cbd5e1"/><text x="126" y="286" fill="#94a3b8" font-size="11" text-anchor="end">50</text>
+<line x1="130" y1="223" x2="135" y2="223" stroke="#cbd5e1"/><text x="126" y="227" fill="#94a3b8" font-size="11" text-anchor="end">100</text>
+<line x1="130" y1="164" x2="135" y2="164" stroke="#cbd5e1"/><text x="126" y="168" fill="#94a3b8" font-size="11" text-anchor="end">200</text>
+<line x1="130" y1="86" x2="135" y2="86" stroke="#cbd5e1"/><text x="126" y="90" fill="#94a3b8" font-size="11" text-anchor="end">500</text>
+<text x="26" y="215" fill="#64748b" font-size="12" text-anchor="middle" transform="rotate(-90 26 215)">perplexity ↓</text>
+<polyline points="241,350 229,349 187,347 176,345 158,331 148,320" fill="none" stroke="#16a34a" stroke-width="2.5"/>
+<circle cx="241" cy="350" r="5" fill="#16a34a"/>
+<circle cx="229" cy="349" r="5" fill="#16a34a"/>
+<circle cx="187" cy="347" r="5" fill="#16a34a"/>
+<circle cx="176" cy="345" r="5" fill="#16a34a"/>
+<circle cx="158" cy="331" r="5" fill="#16a34a"/>
+<circle cx="148" cy="320" r="5" fill="#16a34a"/>
+<text x="249" y="340" fill="#166534" font-size="10.5">Q8_0 145MB·22.5</text>
+<text x="148" y="338" fill="#166534" font-size="10.5" text-anchor="middle">Q2_K 88·32</text>
+<text x="411" y="291" fill="#15803d" font-size="12.5" font-weight="700">quantization frontier — strong</text>
+<circle cx="882" cy="350" r="5" fill="#0ea5e9"/><text x="882" y="339" fill="#0284c7" font-size="10.5" text-anchor="middle">base f32 540·22.4</text>
+<circle cx="606" cy="201" r="5.5" fill="#dc2626"/>
+<circle cx="322" cy="103" r="5.5" fill="#dc2626"/>
+<circle cx="601" cy="104" r="5.5" fill="#dc2626"/>
+<circle cx="275" cy="78" r="5.5" fill="#dc2626"/>
+<text x="616" y="205" fill="#b91c1c" font-size="10.5">hybrid+KD 370·129 (best low-rank)</text>
+<text x="322" y="93" fill="#b91c1c" font-size="10.5" text-anchor="middle">low-rank+Q8_0 195·406</text>
+<text x="611" y="108" fill="#b91c1c" font-size="10.5">hybrid f32 367·404</text>
+<text x="275" y="68" fill="#b91c1c" font-size="10.5" text-anchor="middle">low-rank+Q4_0 166·545</text>
+<text x="492" y="152" fill="#dc2626" font-size="12.5" font-weight="700" text-anchor="middle">low-rank SVD (this repo) — dominated</text>
+</svg>

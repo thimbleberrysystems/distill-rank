@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect x="0.5" y="0.5" width="959" height="299" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="28" y="34" fill="#0f172a" font-size="17" font-weight="700">Activation-aware whitening: truncate by what the model uses, not by weight size</text>
+
+  <!-- plain SVD path -->
+  <rect x="28" y="66" width="430" height="96" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+  <text x="46" y="92" fill="#991b1b" font-size="14" font-weight="700">Plain SVD</text>
+  <text x="46" y="114" fill="#b91c1c" font-size="12.5">drop the smallest-magnitude directions of W —</text>
+  <text x="46" y="132" fill="#b91c1c" font-size="12.5">minimize ‖W − Wᵣ‖. But weight size ≠ importance.</text>
+  <text x="46" y="152" fill="#dc2626" font-size="12" font-weight="600">→ catastrophic: PPL ≈ 8×10⁷</text>
+
+  <!-- whitened path -->
+  <rect x="502" y="66" width="430" height="96" rx="10" fill="#f0fdf4" stroke="#86efac"/>
+  <text x="520" y="92" fill="#166534" font-size="14" font-weight="700">Activation-aware (whiten by H)</text>
+  <text x="520" y="114" fill="#15803d" font-size="12.5">measure which input directions real text excites (H),</text>
+  <text x="520" y="132" fill="#15803d" font-size="12.5">drop what real activations barely touch — min ‖(W−Wᵣ)·X‖.</text>
+  <text x="520" y="152" fill="#16a34a" font-size="12" font-weight="600">→ repairs ~5 orders of magnitude: PPL ≈ 2,554</text>
+
+  <text x="480" y="120" fill="#94a3b8" font-size="22" text-anchor="middle">vs</text>
+
+  <!-- shared bottom note -->
+  <rect x="28" y="188" width="904" height="86" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="480" y="214" fill="#0f172a" font-size="13" font-weight="600" text-anchor="middle">The only thing that changes is the metric the truncation is measured in.</text>
+  <text x="480" y="236" fill="#475569" font-size="12" text-anchor="middle">H = Σ xxᵀ (input covariance) = S·Sᵀ. Factor the whitened matrix W·S, keep rank r, un-whiten. Each discarded</text>
+  <text x="480" y="254" fill="#475569" font-size="12" text-anchor="middle">singular value now equals its exact share of activation-space error (SVD-LLM). This repo gets H with real data,</text>
+  <text x="480" y="270" fill="#475569" font-size="12" text-anchor="middle">or — the novel part — with none at all (next diagram).</text>
+</svg>
